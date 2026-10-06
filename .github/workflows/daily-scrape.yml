@@ -29,12 +29,20 @@ jobs:
       - run: python scraper.py --out data --site site
 
       - name: Commit raw snapshot
+        continue-on-error: true   # a failed push shouldn't block the Pages deploy
         run: |
           git config user.name "github-actions"
           git config user.email "github-actions@users.noreply.github.com"
           git add data
-          git diff --cached --quiet || git commit -m "snapshot $(date -u +%F)"
-          git push
+          git diff --cached --quiet && exit 0
+          git commit -m "snapshot $(date -u +%F)"
+          # main may have moved since checkout (another run, a manual push): rebase and retry
+          for i in 1 2 3 4 5; do
+            git pull --rebase origin main && git push origin HEAD:main && exit 0
+            echo "push attempt $i failed, retrying"
+            sleep $((i * 5))
+          done
+          exit 1
 
       - name: Copy today's CSVs next to the dashboard
         run: cp -r "data/$(date -u +%F)" site/data/csv || true

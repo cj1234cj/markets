@@ -90,7 +90,14 @@ def kalshi_price(m, key):
 
 
 def ms_to_iso(ms):
-    return dt.datetime.fromtimestamp(ms / 1000, dt.timezone.utc).isoformat() if ms else None
+    """Epoch ms -> ISO string; None for missing or out-of-range values
+    (Manifold has markets closing in year 10000+, which datetime can't represent)."""
+    if not ms:
+        return None
+    try:
+        return dt.datetime.fromtimestamp(ms / 1000, dt.timezone.utc).isoformat()
+    except (OverflowError, OSError, ValueError):
+        return None
 
 
 # ---------------------------------------------------------------- sources
@@ -123,13 +130,15 @@ def scrape_kalshi(snap, max_pages):
     exclusive = kalshi_exclusive_events(max_pages)
     rows, cursor = [], None
     for _ in range(max_pages):
-        params = {"status": "open", "limit": 1000}
+        # mve_filter=exclude drops the auto-generated multi-leg parlay (KXMVE*) markets
+        # server-side; they fill the first ~100k results and otherwise exhaust the page cap.
+        params = {"status": "open", "limit": 1000, "mve_filter": "exclude"}
         if cursor:
             params["cursor"] = cursor
         data = get_json(base, params)
         for m in data.get("markets", []):
             ticker = m.get("ticker", "")
-            if ticker.startswith("KXMVE"):  # skip auto-generated multi-leg parlay markets
+            if ticker.startswith("KXMVE"):  # belt and braces, in case mve_filter is ignored
                 continue
             rows.append({
                 "snapshot_utc": snap, "source": "kalshi",
@@ -160,13 +169,18 @@ def scrape_kalshi(snap, max_pages):
 
 
 def scrape_polymarket(snap, max_pages):
-    base = "https://gamma-api.polymarket.com/markets"
-    rows, offset, page_size = [], 0, 500
+    # Offset paging on /markets is capped (pages of <=100, offset < ~5000), so walk the
+    # keyset endpoint by cursor instead. end_date_min drops markets already past their
+    # end date that haven't been closed yet. ~220k rows / ~2200 pages as of Oct 2026.
+    base = "https://gamma-api.polymarket.com/markets/keyset"
+    now = dt.datetime.now(dt.timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+    rows, cursor = [], None
     for _ in range(max_pages):
-        data = get_json(base, {"active": "true", "closed": "false",
-                               "limit": page_size, "offset": offset})
-        if not data:
-            break
+        params = {"active": "true", "closed": "false", "limit": 100, "end_date_min": now}
+        if cursor:
+            params["after_cursor"] = cursor
+        page = get_json(base, params)
+        data = page.get("markets") or []
         for m in data:
             outcomes = json_list(m.get("outcomes"))
             prices = json_list(m.get("outcomePrices"))
@@ -190,10 +204,11 @@ def scrape_polymarket(snap, max_pages):
                 "real_money": 1,
                 "exclusive": 1 if m.get("negRisk") else 0,
             })
-        if len(data) < page_size:
+        # Short pages are normal (server caps page size); only a missing cursor ends it.
+        cursor = page.get("next_cursor")
+        if not cursor or not data:
             break
-        offset += page_size
-        time.sleep(0.25)
+        time.sleep(0.1)
     return rows
 
 
@@ -313,12 +328,39 @@ def load_previous_prices(out_dir, today):
     return prev
 
 
+SITE_TOP_N = 5000  # per source, per dashboard sort order
+
+
+def site_subset(rows, top_n=SITE_TOP_N):
+    """Kalshi + Polymarket have 300k+ open markets: far too many for one JSON file.
+    Keep, per source, the top_n rows for each way the dashboard sorts (edge score,
+    edge score excluding 'thin', 24h volume, total volume). Full data stays in the CSVs."""
+    score = lambda r: (r["edge"] * r["conf"]) if r.get("edge") is not None and r.get("conf") is not None else -1
+    keys = [
+        score,
+        lambda r: score(r) if r.get("basis") != "thin" else -1,
+        lambda r: r.get("volume_24h") or 0,
+        lambda r: r.get("volume") or 0,
+    ]
+    by_source = {}
+    for r in rows:
+        by_source.setdefault(r["source"], []).append(r)
+    keep = set()
+    for group in by_source.values():
+        if len(group) <= top_n:
+            keep.update(map(id, group))
+            continue
+        for key in keys:
+            keep.update(id(r) for r in sorted(group, key=key, reverse=True)[:top_n] if key(r) > 0)
+    return [r for r in rows if id(r) in keep]
+
+
 def write_site(rows, site_dir, out_dir, day, snap, counts, failed):
     """Compact JSON the dashboard (site/index.html) reads."""
     prev = load_previous_prices(out_dir, day)
     rnd = lambda x: round(x, 4) if isinstance(x, float) else x
     packed = []
-    for r in rows:
+    for r in site_subset(rows):
         r = dict(r, prev_price=prev.get((r["source"], str(r["market_id"]))))
         packed.append([rnd(r.get(k)) for k in SITE_FIELDS])
     os.makedirs(os.path.join(site_dir, "data"), exist_ok=True)
@@ -348,7 +390,9 @@ def main():
 
     for name in args.sources:
         try:
-            pages = 10 if name == "manifold" else args.max_pages  # Manifold has huge long tail
+            pages = {"manifold": 10,             # Manifold has huge long tail
+                     "polymarket": args.max_pages * 20,  # 100 rows/page, ~2200 pages
+                     }.get(name, args.max_pages)
             rows = SOURCES[name](snap, pages)
             if kws:
                 rows = [r for r in rows
