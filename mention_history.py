@@ -10,7 +10,9 @@ cutoff (~2 months back). Both are public, no key needed.
 Every past result here is a real settled market, so it can be checked
 against the transcript of that event.
 """
+import json
 import logging
+import os
 import re
 import time
 from collections import defaultdict
@@ -18,6 +20,8 @@ from collections import defaultdict
 log = logging.getLogger("scraper")
 
 KALSHI = "https://api.elections.kalshi.com/trade-api/v2"
+# per-call word counts from transcripts.py (transcripts themselves stay local)
+TRANSCRIPT_HISTORY = os.path.join(os.path.dirname(os.path.abspath(__file__)), "data", "transcript_history.json")
 SKIP_WORDS = {"event does not qualify"}
 TICKER_DATE = re.compile(r"^(\d{2})([A-Z]{3})(\d{2})?$")
 
@@ -90,7 +94,34 @@ def attach_history(rows, get_json):
             events = past.get(norm(r.get("outcome")), {})
             r["hist"] = sorted(((d, res, ev) for ev, (d, res) in events.items()
                                 if ev != r.get("event_id")), reverse=True)
+            r["hist_src"] = "Kalshi results"
         time.sleep(0.1)
+
+    # Transcript counts (transcripts.py, run locally) cover more calls than Kalshi has
+    # listed; use them whenever they do.
+    tx = load_transcript_history()
+    today = time.strftime("%Y-%m-%d", time.gmtime())
+    used = 0
+    for r in kalshi:
+        calls = tx.get(series_of(r["market_id"]), {}).get("words", {}).get(norm(r.get("outcome")))
+        if not calls:
+            continue
+        hist = sorted(((d, "yes" if n >= need else "no", "transcript") for d, n, need in calls
+                       if d < today), reverse=True)
+        if len(hist) >= len(r.get("hist") or []):
+            r["hist"], r["hist_src"] = hist, "transcripts"
+            used += 1
     with_hist = sum(1 for r in kalshi if r.get("hist"))
-    log.info("history: %d series, %d/%d Kalshi markets have past results",
-             len(by_series), with_hist, len(kalshi))
+    log.info("history: %d series, %d/%d Kalshi markets have past results (%d from transcripts)",
+             len(by_series), with_hist, len(kalshi), used)
+
+
+def load_transcript_history(path=TRANSCRIPT_HISTORY):
+    try:
+        with open(path, encoding="utf-8") as fh:
+            return json.load(fh).get("series", {})
+    except FileNotFoundError:
+        return {}
+    except (OSError, ValueError) as e:
+        log.warning("couldn't read %s: %s", path, e)
+        return {}

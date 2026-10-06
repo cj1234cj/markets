@@ -1,3 +1,4 @@
 site/data/
 __pycache__/
 *.db
+transcripts/
