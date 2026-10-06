@@ -1,0 +1,343 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Prediction markets</title>
+<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>🎯</text></svg>">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Instrument+Sans:wght@400;500;600;700&display=swap" rel="stylesheet">
+<style>
+:root{
+  --bg:#E9EDF2; --panel:#FFFFFF; --ink:#18202E; --muted:#5B6576; --line:#D3D9E2;
+  --track:#DCE2EA; --yes:#1F6FEB; --spread:#9CC0F7; --up:#137A3E; --down:#B42318;
+  --kalshi:#0E9F6E; --polymarket:#2E5BFF; --predictit:#7A3FD1; --manifold:#C2410C;
+  box-sizing:border-box;
+  padding-top:env(safe-area-inset-top,0px); padding-bottom:env(safe-area-inset-bottom,0px);
+}
+@media (prefers-color-scheme:dark){:root:not([data-theme="light"]){
+  --bg:#10151F; --panel:#182030; --ink:#E6EBF3; --muted:#97A2B5; --line:#2A3446;
+  --track:#26304A; --yes:#5C9BFF; --spread:#2F4C7F; --up:#4CC77F; --down:#F2716A;
+}}
+:root[data-theme="dark"]{
+  --bg:#10151F; --panel:#182030; --ink:#E6EBF3; --muted:#97A2B5; --line:#2A3446;
+  --track:#26304A; --yes:#5C9BFF; --spread:#2F4C7F; --up:#4CC77F; --down:#F2716A;
+}
+*,*::before,*::after{box-sizing:inherit}
+html{scroll-padding-top:env(safe-area-inset-top,0px)}
+body{margin:0;background:var(--bg);color:var(--ink);
+  font:15px/1.45 "Instrument Sans",system-ui,-apple-system,"Segoe UI",sans-serif;
+  font-variant-numeric:tabular-nums}
+.wrap{max-width:880px;margin:0 auto;padding:20px 16px 48px}
+header h1{font-size:30px;line-height:1.1;margin:0 0 6px;font-weight:700;letter-spacing:-.02em}
+.updated{color:var(--muted);margin:0 0 14px}
+.counts{display:flex;flex-wrap:wrap;gap:6px 14px;color:var(--muted);font-size:13px;margin-bottom:18px}
+.dot{display:inline-block;width:9px;height:9px;border-radius:50%;margin-right:6px;vertical-align:1px}
+.warn{color:var(--down)}
+
+.controls{position:sticky;top:env(safe-area-inset-top,0px);z-index:5;background:var(--bg);
+  padding:10px 0 12px;border-bottom:1px solid var(--line);margin-bottom:6px}
+input[type=search]{width:100%;font:inherit;font-size:16px;padding:11px 13px;border:1px solid var(--line);
+  border-radius:10px;background:var(--panel);color:var(--ink)}
+.row{display:flex;flex-wrap:wrap;gap:8px;margin-top:10px;align-items:center}
+.chip{font:inherit;font-size:13px;padding:6px 11px;border-radius:999px;border:1px solid var(--line);
+  background:var(--panel);color:var(--ink);cursor:pointer}
+.chip[aria-pressed="false"]{opacity:.45}
+.chip.preset[aria-pressed="false"]{opacity:1}
+.chip.preset[aria-pressed="true"]{background:var(--ink);color:var(--bg);border-color:var(--ink)}
+select{font:inherit;font-size:13px;padding:6px 9px;border-radius:8px;border:1px solid var(--line);
+  background:var(--panel);color:var(--ink);margin-left:auto}
+:focus-visible{outline:2px solid var(--yes);outline-offset:2px}
+
+.summary{color:var(--muted);font-size:13px;margin:10px 0}
+ol{list-style:none;margin:0;padding:0}
+li.m{display:grid;grid-template-columns:1fr auto;gap:4px 16px;padding:14px 0;border-bottom:1px solid var(--line)}
+.title{font-weight:600;line-height:1.3}
+.title a{color:inherit;text-decoration:none}
+.title a:hover{text-decoration:underline}
+.outcome{color:var(--muted);font-size:14px}
+.price{grid-row:1/3;grid-column:2;text-align:right;align-self:start}
+.price b{display:block;font-size:24px;font-weight:700;letter-spacing:-.01em;line-height:1.1}
+.chg{font-size:13px;font-weight:600}
+.chg.up{color:var(--up)} .chg.down{color:var(--down)} .chg.flat{color:var(--muted)}
+.bar{grid-column:1/3;position:relative;height:8px;border-radius:4px;background:var(--track);overflow:hidden;margin-top:4px}
+.bar .sp{position:absolute;top:0;bottom:0;background:var(--spread)}
+.bar .px{position:absolute;top:-2px;bottom:-2px;width:3px;margin-left:-1.5px;background:var(--yes);border-radius:2px}
+.meta{grid-column:1/3;display:flex;flex-wrap:wrap;gap:4px 14px;font-size:12.5px;color:var(--muted)}
+.edge{grid-column:1/3;display:flex;flex-wrap:wrap;align-items:baseline;gap:4px 10px;margin-top:2px}
+.pill{font-weight:700;font-size:14px;padding:2px 9px;border-radius:6px}
+.pill.high{background:var(--up);color:var(--panel)}
+.pill.medium{background:var(--yes);color:var(--panel)}
+.pill.low{background:var(--track);color:var(--ink)}
+.edge .side{font-weight:600;font-size:14px}
+.edge .why{font-size:13px;color:var(--muted)}
+.ref{grid-column:1/3;font-size:12.5px;color:var(--muted);line-height:1.35}
+.ref a{color:var(--yes)}
+.more{display:block;width:100%;margin-top:18px;font:inherit;font-weight:600;padding:12px;border-radius:10px;
+  border:1px solid var(--line);background:var(--panel);color:var(--ink);cursor:pointer}
+.empty{padding:40px 0;color:var(--muted);text-align:center}
+.head{display:flex;align-items:flex-start;justify-content:space-between;gap:12px}
+.refresh{font:inherit;font-weight:600;font-size:14px;padding:9px 14px;border-radius:10px;border:1px solid var(--ink);
+  background:var(--ink);color:var(--bg);cursor:pointer;white-space:nowrap;margin-top:4px}
+.refresh:disabled{opacity:.5;cursor:default}
+.status{margin:0 0 14px;padding:10px 12px;border-radius:10px;background:var(--panel);border:1px solid var(--line);font-size:14px}
+.status a{color:var(--yes)}
+.tokenbox{margin:0 0 14px;padding:12px;border-radius:10px;background:var(--panel);border:1px solid var(--line);font-size:14px}
+.tokenbox p{margin:0 0 8px}
+.tokenbox .hint{color:var(--muted);font-size:13px}
+.tokenbox a{color:var(--yes)}
+.tokenbox input{flex:1;min-width:0;font:inherit;font-size:16px;padding:8px 10px;border:1px solid var(--line);border-radius:8px;background:var(--bg);color:var(--ink)}
+.linkbtn{font:inherit;font-size:12.5px;background:none;border:0;color:var(--muted);text-decoration:underline;cursor:pointer;padding:0}
+@media (min-width:640px){header h1{font-size:38px}}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <header>
+    <div class="head">
+      <h1>Prediction markets</h1>
+      <button class="refresh" id="refresh">Refresh now</button>
+    </div>
+    <p class="updated" id="updated">Loading today's snapshot…</p>
+    <p class="status" id="status" role="status" hidden></p>
+    <div class="tokenbox" id="tokenbox" hidden>
+      <p>To refresh from this page, paste a GitHub token once. It's saved only in this browser.</p>
+      <p class="hint"><a href="https://github.com/settings/personal-access-tokens/new" target="_blank" rel="noopener">Create a fine-grained token</a>, give it access to this repository only, and set Actions to "Read and write".</p>
+      <div class="row"><input type="password" id="token" placeholder="github_pat_…" autocomplete="off" aria-label="GitHub token"><button class="chip" id="savetoken">Save and refresh</button></div>
+    </div>
+    <div class="counts" id="counts"></div>
+  </header>
+
+  <div class="controls">
+    <input type="search" id="q" placeholder="Search markets, e.g. Fed, Nvidia, election" aria-label="Search markets">
+    <div class="row" id="sources"></div>
+    <div class="row">
+      <button class="chip preset" id="mentions" aria-pressed="false" title="Earnings-call and speech mention markets">Mention markets</button>
+      <button class="chip preset" id="realmoney" aria-pressed="true">Real money only</button>
+      <button class="chip preset" id="solid" aria-pressed="false" title="Hide markets where the edge is only an estimate from thin trading">Solid signals only</button>
+      <select id="sort" aria-label="Sort by">
+        <option value="edge">Biggest edge</option>
+        <option value="vol24">Most traded today</option>
+        <option value="vol">Most traded overall</option>
+        <option value="move">Biggest move since last snapshot</option>
+        <option value="close">Closing soonest</option>
+        <option value="spread">Tightest spread</option>
+      </select>
+    </div>
+  </div>
+
+  <p class="summary" id="summary"></p>
+  <ol id="list"></ol>
+  <button class="more" id="more" hidden>Show 50 more</button>
+  <p class="summary"><button class="linkbtn" id="forget" hidden>Remove saved GitHub token from this browser</button></p>
+</div>
+
+<script>
+const NAMES = {kalshi:"Kalshi", polymarket:"Polymarket", predictit:"PredictIt", manifold:"Manifold"};
+const PLAY_MONEY = new Set(["manifold"]);
+const MENTION_RE = /\b(say|says|said|mention|mentions|mentioned)\b/i;
+const PAGE = 50;
+
+let rows = [], view = [], shown = 0;
+const state = { q:"", sources:new Set(Object.keys(NAMES)), mentions:false, realMoney:true, solid:false, sort:"edge" };
+const $ = id => document.getElementById(id);
+
+const pct = x => x == null ? "–" : (x*100 >= 1 || x === 0 ? Math.round(x*100) : (x*100).toFixed(1)) + "¢";
+const money = x => x == null ? null : x >= 1e6 ? (x/1e6).toFixed(1)+"M" : x >= 1e3 ? (x/1e3).toFixed(1)+"k" : Math.round(x).toString();
+const date = s => { if(!s) return null; const d = new Date(s); return isNaN(d) ? null :
+  d.toLocaleDateString(undefined,{month:"short",day:"numeric",year: d.getFullYear()!==new Date().getFullYear()?"numeric":undefined}); };
+
+let lastLoad = 0;
+async function load(silent){
+  try{
+    const res = await fetch(`data/latest.json?t=${Date.now()}`, {cache:"no-store"});
+    if(!res.ok) throw new Error(res.status);
+    const data = await res.json();
+    const F = data.fields;
+    rows = data.rows.map(r => {
+      const o = {}; F.forEach((k,i) => o[k] = r[i]);
+      o.hay = `${o.title||""} ${o.outcome||""}`.toLowerCase();
+      o.closeMs = o.close_time ? Date.parse(o.close_time) : Infinity;
+      o.move = (o.yes_price != null && o.prev_price != null) ? o.yes_price - o.prev_price : null;
+      o.spread = (o.yes_bid != null && o.yes_ask != null) ? o.yes_ask - o.yes_bid : null;
+      o.score = (o.edge != null && o.conf != null) ? o.edge * o.conf : null;
+      return o;
+    });
+    const g = new Date(data.generated);
+    $("updated").textContent = `Updated ${g.toLocaleString(undefined,{dateStyle:"medium",timeStyle:"short"})}. Refreshes automatically every day.`;
+    $("counts").innerHTML = Object.keys(NAMES).map(s =>
+      data.counts[s] != null ? `<span><span class="dot" style="background:var(--${s})"></span>${NAMES[s]} ${data.counts[s].toLocaleString()}</span>` :
+      data.failed.includes(s) ? `<span class="warn"><span class="dot" style="background:var(--${s})"></span>${NAMES[s]} didn't load today</span>` : ""
+    ).join("");
+    buildSourceChips(data.counts);
+    apply();
+    lastLoad = Date.now();
+    return data.generated;
+  }catch(e){
+    if(!silent) $("updated").textContent = "No snapshot yet. Tap Refresh now, or run the workflow once from the Actions tab on GitHub.";
+    return null;
+  }
+}
+
+function buildSourceChips(counts){
+  $("sources").innerHTML = Object.keys(NAMES).filter(s => counts[s] != null).map(s =>
+    `<button class="chip" data-src="${s}" aria-pressed="${state.sources.has(s)}"><span class="dot" style="background:var(--${s})"></span>${NAMES[s]}</button>`).join("");
+  $("sources").querySelectorAll("button").forEach(b => b.onclick = () => {
+    const s = b.dataset.src, on = !state.sources.has(s);
+    on ? state.sources.add(s) : state.sources.delete(s);
+    b.setAttribute("aria-pressed", on); apply();
+  });
+}
+
+function apply(){
+  const terms = state.q.toLowerCase().split(/\s+/).filter(Boolean);
+  view = rows.filter(r =>
+    state.sources.has(r.source) &&
+    !(state.realMoney && PLAY_MONEY.has(r.source)) &&
+    (!state.mentions || MENTION_RE.test(r.title||"")) &&
+    (!state.solid || (r.conf ?? 0) >= 0.5) &&
+    terms.every(t => r.hay.includes(t)));
+  const by = {
+    edge:  (a,b) => (b.score ?? -1) - (a.score ?? -1),
+    vol24: (a,b) => (b.volume_24h??-1) - (a.volume_24h??-1),
+    vol:   (a,b) => (b.volume??-1) - (a.volume??-1),
+    move:  (a,b) => Math.abs(b.move??0) - Math.abs(a.move??0),
+    close: (a,b) => a.closeMs - b.closeMs,
+    spread:(a,b) => (a.spread??9) - (b.spread??9),
+  }[state.sort];
+  view.sort(by);
+  shown = 0; $("list").innerHTML = "";
+  $("summary").textContent = `${view.length.toLocaleString()} markets`;
+  if(!view.length) $("list").innerHTML = `<li class="empty">No markets match. Try fewer words or switch more sources on.</li>`;
+  more();
+}
+
+function esc(s){ return String(s??"").replace(/[&<>"]/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;"}[c])); }
+
+function item(r){
+  const p = r.yes_price, bid = r.yes_bid, ask = r.yes_ask;
+  const chg = r.move == null ? "" : Math.abs(r.move) < 0.005 ? `<span class="chg flat">no change</span>` :
+    `<span class="chg ${r.move>0?"up":"down"}">${r.move>0?"▲":"▼"} ${Math.abs(r.move*100).toFixed(Math.abs(r.move)<0.01?1:0)}</span>`;
+  const sp = (bid!=null && ask!=null && ask>=bid) ? `<span class="sp" style="left:${bid*100}%;width:${Math.max((ask-bid)*100,.5)}%"></span>` : "";
+  const px = p!=null ? `<span class="px" style="left:${Math.min(Math.max(p,0),1)*100}%"></span>` : "";
+  const meta = [
+    `<span><span class="dot" style="background:var(--${r.source})"></span>${NAMES[r.source]}</span>`,
+    bid!=null||ask!=null ? `<span>Bid ${pct(bid)} / Ask ${pct(ask)}</span>` : "",
+    money(r.volume_24h) ? `<span>${money(r.volume_24h)} traded today</span>` : "",
+    money(r.volume) ? `<span>${money(r.volume)} total</span>` : "",
+    date(r.close_time) ? `<span>Closes ${date(r.close_time)}</span>` : "",
+  ].join("");
+  const BASIS = {arb:"Arbitrage", cross:"Other venue disagrees", bracket:"Outcomes add to over 100%",
+                 longshot:"Longshot bias", thin:"Thin market"};
+  const level = r.conf >= 0.9 ? "high" : r.conf >= 0.5 ? "medium" : "low";
+  const LEVEL = {high:"High confidence", medium:"Medium confidence", low:"Low confidence"};
+  const edgeHtml = r.edge == null ? "" : `<div class="edge">
+      <span class="pill ${level}">${r.basis === "thin" ? "Up to " : "+"}${pct(r.edge)}</span>
+      <span class="side">${r.side ? "Buy " + r.side : "Research"}</span>
+      <span class="why">${BASIS[r.basis] || ""}, ${LEVEL[level].toLowerCase()}</span></div>`;
+  const refHtml = r.ref ? `<div class="ref">${esc(r.ref)}${r.ref_url ? ` <a href="${esc(r.ref_url)}" target="_blank" rel="noopener">Compare</a>` : ""}</div>` : "";
+  const title = r.url ? `<a href="${esc(r.url)}" target="_blank" rel="noopener">${esc(r.title)}</a>` : esc(r.title);
+  const outcome = r.outcome && !/^yes$/i.test(r.outcome) ? `<div class="outcome">${esc(r.outcome)}</div>` : "";
+  return `<li class="m"><div><div class="title">${title}</div>${outcome}</div>
+    <div class="price"><b>${pct(p)}</b>${chg}</div>
+    ${edgeHtml}${refHtml}
+    <div class="bar" aria-hidden="true">${sp}${px}</div><div class="meta">${meta}</div></li>`;
+}
+
+function more(){
+  $("list").insertAdjacentHTML("beforeend", view.slice(shown, shown+PAGE).map(item).join(""));
+  shown += PAGE; $("more").hidden = shown >= view.length;
+}
+
+let t; $("q").oninput = e => { clearTimeout(t); t = setTimeout(() => { state.q = e.target.value; apply(); }, 150); };
+$("sort").onchange = e => { state.sort = e.target.value; apply(); };
+$("more").onclick = more;
+$("mentions").onclick = e => { state.mentions = !state.mentions; e.currentTarget.setAttribute("aria-pressed", state.mentions); apply(); };
+$("solid").onclick = e => { state.solid = !state.solid; e.currentTarget.setAttribute("aria-pressed", state.solid); apply(); };
+$("realmoney").onclick = e => { state.realMoney = !state.realMoney; e.currentTarget.setAttribute("aria-pressed", state.realMoney); apply(); };
+/* ---------- Refresh now: triggers the GitHub Action, waits, reloads ---------- */
+const REPO = (() => {
+  const owner = location.hostname.split(".")[0];
+  const repo = location.pathname.split("/").filter(Boolean)[0] || `${owner}.github.io`;
+  return {owner, repo};
+})();
+const WORKFLOW = "daily-scrape.yml";
+const TOKEN_KEY = "pm_github_token";
+const getToken = () => { try { return localStorage.getItem(TOKEN_KEY); } catch { return null; } };
+const setToken = v => { try { v ? localStorage.setItem(TOKEN_KEY, v) : localStorage.removeItem(TOKEN_KEY); } catch {} $("forget").hidden = !getToken(); };
+const sleep = ms => new Promise(r => setTimeout(r, ms));
+
+function status(msg, link){
+  const el = $("status");
+  el.hidden = !msg; el.textContent = msg || "";
+  if(link){ const a = document.createElement("a"); a.href = link; a.target = "_blank"; a.rel = "noopener"; a.textContent = " Open the run on GitHub."; el.append(a); }
+}
+
+async function gh(path, opts = {}){
+  const res = await fetch(`https://api.github.com/repos/${REPO.owner}/${REPO.repo}${path}`, {
+    ...opts,
+    headers: { Accept: "application/vnd.github+json", Authorization: `Bearer ${getToken()}`,
+               "X-GitHub-Api-Version": "2022-11-28", ...(opts.body ? {"Content-Type": "application/json"} : {}) },
+  });
+  if(res.status === 401 || res.status === 403){ const e = new Error("auth"); e.code = "auth"; throw e; }
+  if(res.status === 404){ const e = new Error("notfound"); e.code = "notfound"; throw e; }
+  if(!res.ok) throw new Error(`GitHub returned an error (${res.status}). Try again in a minute.`);
+  return res.status === 204 ? null : res.json();
+}
+
+let refreshing = false;
+async function refresh(){
+  if(refreshing) return;
+  if(!getToken()){ $("tokenbox").hidden = false; $("token").focus(); return; }
+  refreshing = true; $("refresh").disabled = true; $("refresh").textContent = "Refreshing…";
+  const started = Date.now() - 60000;   // tolerance for clock differences
+  try{
+    status("Starting the scrape…");
+    const { default_branch } = await gh("");
+    await gh(`/actions/workflows/${WORKFLOW}/dispatches`, { method: "POST", body: JSON.stringify({ ref: default_branch }) });
+    status("Scraping all sites. This usually takes 2–4 minutes. Keep this page open.");
+
+    let run = null;
+    for(let i = 0; i < 72 && !(run && run.status === "completed"); i++){   // up to ~12 min
+      await sleep(10000);
+      const r = await gh(`/actions/workflows/${WORKFLOW}/runs?event=workflow_dispatch&per_page=5`);
+      run = r.workflow_runs.find(x => Date.parse(x.created_at) >= started) || null;
+    }
+    if(!run || run.status !== "completed"){ status("The scrape is taking longer than usual.", run?.html_url); return; }
+    if(run.conclusion !== "success"){ status("The scrape didn't finish.", run.html_url); return; }
+
+    status("Scrape finished. Loading the new data…");
+    for(let i = 0; i < 18; i++){
+      const g = await load(true);
+      if(g && Date.parse(g) >= started){ status("Updated just now."); setTimeout(() => status(""), 4000); return; }
+      await sleep(10000);
+    }
+    status("The scrape finished but the new data hasn't reached the page yet. Reload in a minute.");
+  }catch(e){
+    if(e.code === "auth"){ setToken(null); $("tokenbox").hidden = false; status("GitHub didn't accept the token. Paste a new one with Actions set to \"Read and write\"."); }
+    else if(e.code === "notfound") status(`Couldn't reach ${REPO.owner}/${REPO.repo} or its workflow. Check that the token has access to this repository.`);
+    else status(e.message);
+  }finally{
+    refreshing = false; $("refresh").disabled = false; $("refresh").textContent = "Refresh now";
+  }
+}
+
+$("refresh").onclick = refresh;
+$("savetoken").onclick = () => {
+  const v = $("token").value.trim();
+  if(!v){ $("token").focus(); return; }
+  setToken(v); $("token").value = ""; $("tokenbox").hidden = true; refresh();
+};
+$("forget").onclick = () => { setToken(null); status("Token removed from this browser."); };
+$("forget").hidden = !getToken();
+
+// Pick up the daily snapshot when you come back to the tab
+document.addEventListener("visibilitychange", () => {
+  if(document.visibilityState === "visible" && !refreshing && Date.now() - lastLoad > 15*60*1000) load(true);
+});
+
+load();
+</script>
+</body>
+</html>
