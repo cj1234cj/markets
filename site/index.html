@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
-<title>Prediction markets</title>
+<title>Mention markets</title>
 <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>🎯</text></svg>">
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
@@ -96,7 +96,7 @@ li.m{display:grid;grid-template-columns:1fr auto;gap:4px 16px;padding:14px 0;bor
 <div class="wrap">
   <header>
     <div class="head">
-      <h1>Prediction markets</h1>
+      <h1>Mention markets</h1>
       <button class="refresh" id="refresh">Refresh now</button>
     </div>
     <p class="updated" id="updated">Loading today's snapshot…</p>
@@ -110,10 +110,9 @@ li.m{display:grid;grid-template-columns:1fr auto;gap:4px 16px;padding:14px 0;bor
   </header>
 
   <div class="controls">
-    <input type="search" id="q" placeholder="Search markets, e.g. Fed, Nvidia, election" aria-label="Search markets">
+    <input type="search" id="q" placeholder="Search, e.g. Trump, Powell, Nvidia, tariff" aria-label="Search markets">
     <div class="row" id="sources"></div>
     <div class="row">
-      <button class="chip preset" id="mentions" aria-pressed="false" title="Earnings-call and speech mention markets">Mention markets</button>
       <button class="chip preset" id="realmoney" aria-pressed="true">Real money only</button>
       <button class="chip preset" id="solid" aria-pressed="false" title="Hide markets where the edge is only an estimate from thin trading">Solid signals only</button>
       <select id="sort" aria-label="Sort by">
@@ -121,7 +120,7 @@ li.m{display:grid;grid-template-columns:1fr auto;gap:4px 16px;padding:14px 0;bor
         <option value="vol24">Most traded today</option>
         <option value="vol">Most traded overall</option>
         <option value="move">Biggest move since last snapshot</option>
-        <option value="close">Closing soonest</option>
+        <option value="close">Deciding soonest</option>
         <option value="spread">Tightest spread</option>
       </select>
     </div>
@@ -136,11 +135,10 @@ li.m{display:grid;grid-template-columns:1fr auto;gap:4px 16px;padding:14px 0;bor
 <script>
 const NAMES = {kalshi:"Kalshi", polymarket:"Polymarket", predictit:"PredictIt", manifold:"Manifold"};
 const PLAY_MONEY = new Set(["manifold"]);
-const MENTION_RE = /\b(say|says|said|mention|mentions|mentioned)\b/i;
 const PAGE = 50;
 
 let rows = [], view = [], shown = 0;
-const state = { q:"", sources:new Set(Object.keys(NAMES)), mentions:false, realMoney:true, solid:false, sort:"edge" };
+const state = { q:"", sources:new Set(Object.keys(NAMES)), realMoney:true, solid:false, sort:"edge" };
 const $ = id => document.getElementById(id);
 
 const pct = x => x == null ? "–" : (x*100 >= 1 || x === 0 ? Math.round(x*100) : (x*100).toFixed(1)) + "¢";
@@ -158,7 +156,8 @@ async function load(silent){
     rows = data.rows.map(r => {
       const o = {}; F.forEach((k,i) => o[k] = r[i]);
       o.hay = `${o.title||""} ${o.outcome||""}`.toLowerCase();
-      o.closeMs = o.close_time ? Date.parse(o.close_time) : Infinity;
+      o.decides = o.decision_time || o.close_time;
+      o.closeMs = o.decides ? Date.parse(o.decides) : Infinity;
       o.move = (o.yes_price != null && o.prev_price != null) ? o.yes_price - o.prev_price : null;
       o.spread = (o.yes_bid != null && o.yes_ask != null) ? o.yes_ask - o.yes_bid : null;
       o.score = (o.edge != null && o.conf != null) ? o.edge * o.conf : null;
@@ -195,7 +194,6 @@ function apply(){
   view = rows.filter(r =>
     state.sources.has(r.source) &&
     !(state.realMoney && PLAY_MONEY.has(r.source)) &&
-    (!state.mentions || MENTION_RE.test(r.title||"")) &&
     (!state.solid || (r.conf ?? 0) >= 0.5) &&
     terms.every(t => r.hay.includes(t)));
   const by = {
@@ -226,7 +224,7 @@ function item(r){
     bid!=null||ask!=null ? `<span>Bid ${pct(bid)} / Ask ${pct(ask)}</span>` : "",
     money(r.volume_24h) ? `<span>${money(r.volume_24h)} traded today</span>` : "",
     money(r.volume) ? `<span>${money(r.volume)} total</span>` : "",
-    date(r.close_time) ? `<span>Closes ${date(r.close_time)}</span>` : "",
+    date(r.decides) ? `<span>Decides ${date(r.decides)}</span>` : "",
   ].join("");
   const BASIS = {arb:"Arbitrage", cross:"Other venue disagrees", bracket:"Outcomes add to over 100%",
                  longshot:"Longshot bias", thin:"Thin market"};
@@ -253,7 +251,6 @@ function more(){
 let t; $("q").oninput = e => { clearTimeout(t); t = setTimeout(() => { state.q = e.target.value; apply(); }, 150); };
 $("sort").onchange = e => { state.sort = e.target.value; apply(); };
 $("more").onclick = more;
-$("mentions").onclick = e => { state.mentions = !state.mentions; e.currentTarget.setAttribute("aria-pressed", state.mentions); apply(); };
 $("solid").onclick = e => { state.solid = !state.solid; e.currentTarget.setAttribute("aria-pressed", state.solid); apply(); };
 $("realmoney").onclick = e => { state.realMoney = !state.realMoney; e.currentTarget.setAttribute("aria-pressed", state.realMoney); apply(); };
 /* ---------- Refresh now: triggers the GitHub Action, waits, reloads ---------- */

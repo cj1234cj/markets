@@ -59,7 +59,8 @@ def has_bid(r):
 
 
 def has_ask(r):
-    return r.get("yes_ask") is not None and r["yes_ask"] < 1
+    # Kalshi reports ask 0 when nobody is selling; that's no offer, not a free contract
+    return r.get("yes_ask") is not None and 0 < r["yes_ask"] < 1
 
 
 def mid(r):

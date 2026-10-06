@@ -16,7 +16,11 @@ Usage:
   python scraper.py --db markets.db          # also append to SQLite for history queries
   python scraper.py --sources kalshi polymarket
   python scraper.py --site site               # also refresh the dashboard data (default)
-  python scraper.py --keyword "say" --keyword "mention"   # keep only matching titles
+  python scraper.py --keyword "fed"          # keep only matching titles
+  python scraper.py --all-markets --horizon-days 0   # every open market, any date
+
+By default only *mention* markets ("What will X say...", 'Will Trump say "Y"...')
+whose decision date is within --horizon-days (30) are kept.
 """
 import argparse
 import csv
@@ -25,6 +29,7 @@ import gzip
 import json
 import logging
 import os
+import re
 import sqlite3
 import time
 
@@ -40,6 +45,8 @@ FIELDS = [
     "open_interest", "liquidity", "close_time", "url", "real_money",
     # structure used by the edge model (edge.py)
     "exclusive", "strike_type", "floor_strike", "cap_strike",
+    # when the outcome is actually known (Kalshi close_time can be a far-off backstop)
+    "decision_time",
 ]
 
 session = requests.Session()
@@ -98,6 +105,61 @@ def ms_to_iso(ms):
         return dt.datetime.fromtimestamp(ms / 1000, dt.timezone.utc).isoformat()
     except (OverflowError, OSError, ValueError):
         return None
+
+
+# ---------------------------------------------------------------- mention filter
+# Kalshi: mention markets live in series like KXTRUMPMENTION, KXEARNINGSMENTIONTSLA,
+# KXTRUMPSAY... The title check drops series that only contain "SAY" by accident.
+KALSHI_MENTION_TITLE = re.compile(r"\b(say|says|said|mention|mentions|mentioned)\b", re.I)
+# Other venues: titles like 'Will Trump say "X"', '"X" be said during...', 'tweet "X"'.
+# Bare "say"/"said" also matches song titles and names (e.g. "Said El Mala").
+MENTION_TITLE = re.compile(
+    r'\b(say|says|tweet|tweets|post|posts)\s+["“]'
+    r'|["”]\s+be\s+said\b'
+    r'|\bwhat will .+ say\b'
+    r'|\bmention(s|ed)?\b', re.I)
+
+
+def is_mention(r):
+    title = r.get("title") or ""
+    if r["source"] == "kalshi":
+        series = str(r["market_id"]).split("-")[0]
+        return ("MENTION" in series or "SAY" in series) and bool(KALSHI_MENTION_TITLE.search(title))
+    return bool(MENTION_TITLE.search(title))
+
+
+KALSHI_TICKER_DATE = re.compile(r"^(\d{2})([A-Z]{3})(\d{2})$")
+
+
+def decision_time(r):
+    """Best guess at when the outcome is known. Kalshi mention tickers embed the
+    event date (KXEARNINGSMENTIONSBUX-26OCT29-...), while close_time is often a
+    backstop months later; take whichever is earlier. Elsewhere: close_time."""
+    close = r.get("close_time") or None
+    if r["source"] != "kalshi":
+        return close
+    parts = str(r["market_id"]).split("-")
+    m = KALSHI_TICKER_DATE.match(parts[1]) if len(parts) > 1 else None
+    if not m:
+        return close
+    try:
+        day = dt.datetime.strptime("".join(m.groups()), "%y%b%d").replace(
+            hour=23, minute=59, tzinfo=dt.timezone.utc).isoformat()
+    except ValueError:
+        return close
+    return min(day, close) if close else day
+
+
+def within(iso, horizon):
+    if not iso:
+        return False
+    try:
+        t = dt.datetime.fromisoformat(iso.replace("Z", "+00:00"))
+    except ValueError:
+        return False
+    if t.tzinfo is None:
+        t = t.replace(tzinfo=dt.timezone.utc)
+    return t <= horizon
 
 
 # ---------------------------------------------------------------- sources
@@ -168,7 +230,7 @@ def scrape_kalshi(snap, max_pages):
     return rows
 
 
-def scrape_polymarket(snap, max_pages):
+def scrape_polymarket(snap, max_pages, end_max=None):
     # Offset paging on /markets is capped (pages of <=100, offset < ~5000), so walk the
     # keyset endpoint by cursor instead. end_date_min drops markets already past their
     # end date that haven't been closed yet. ~220k rows / ~2200 pages as of Oct 2026.
@@ -177,6 +239,8 @@ def scrape_polymarket(snap, max_pages):
     rows, cursor = [], None
     for _ in range(max_pages):
         params = {"active": "true", "closed": "false", "limit": 100, "end_date_min": now}
+        if end_max:
+            params["end_date_max"] = end_max
         if cursor:
             params["after_cursor"] = cursor
         page = get_json(base, params)
@@ -306,7 +370,7 @@ def write_sqlite(rows, db_path):
 
 
 SITE_FIELDS = ["source", "market_id", "title", "outcome", "yes_price", "yes_bid",
-               "yes_ask", "volume", "volume_24h", "close_time", "url", "prev_price",
+               "yes_ask", "volume", "volume_24h", "close_time", "decision_time", "url", "prev_price",
                "edge", "side", "basis", "conf", "ref", "ref_url"]
 
 
@@ -378,6 +442,10 @@ def main():
     ap.add_argument("--db", help="optional SQLite file to append snapshots to")
     ap.add_argument("--site", default="site", help="dashboard folder (writes data/latest.json); '' to skip")
     ap.add_argument("--max-pages", type=int, default=200, help="page cap per source")
+    ap.add_argument("--all-markets", action="store_true",
+                    help="keep every market, not just mention markets")
+    ap.add_argument("--horizon-days", type=int, default=30,
+                    help="only keep markets decided within this many days (0 = no limit)")
     ap.add_argument("--keyword", action="append", default=[],
                     help="only keep rows whose title/outcome contains this (repeatable, case-insensitive)")
     args = ap.parse_args()
@@ -386,6 +454,7 @@ def main():
     now = dt.datetime.now(dt.timezone.utc)
     snap, day = now.isoformat(timespec="seconds"), now.strftime("%Y-%m-%d")
     kws = [k.lower() for k in args.keyword]
+    horizon = now + dt.timedelta(days=args.horizon_days) if args.horizon_days > 0 else None
     all_rows, failed, counts = [], [], {}
 
     for name in args.sources:
@@ -393,7 +462,16 @@ def main():
             pages = {"manifold": 10,             # Manifold has huge long tail
                      "polymarket": args.max_pages * 20,  # 100 rows/page, ~2200 pages
                      }.get(name, args.max_pages)
-            rows = SOURCES[name](snap, pages)
+            if name == "polymarket" and horizon:  # filter server-side: far fewer pages
+                rows = scrape_polymarket(snap, pages, horizon.strftime("%Y-%m-%dT%H:%M:%SZ"))
+            else:
+                rows = SOURCES[name](snap, pages)
+            for r in rows:
+                r["decision_time"] = decision_time(r)
+            if not args.all_markets:
+                rows = [r for r in rows if is_mention(r)]
+            if horizon:
+                rows = [r for r in rows if within(r["decision_time"], horizon)]
             if kws:
                 rows = [r for r in rows
                         if any(k in f"{r['title']} {r['outcome']}".lower() for k in kws)]
