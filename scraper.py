@@ -17,11 +17,11 @@ Usage:
   python scraper.py --sources kalshi polymarket
   python scraper.py --site site               # also refresh the dashboard data (default)
   python scraper.py --keyword "fed"          # keep only matching titles
-  python scraper.py --all-markets --horizon-days 0   # every open market, any date
+  python scraper.py --no-ledger              # test run without touching the track record
 
-By default only earnings-call mention markets ("What will Apple say during their
-next earnings call?") whose decision date is within --horizon-days (30) are kept.
---topic mentions widens that to all mention markets (speeches, rallies, Fed...).
+Every open market deciding within --horizon-days (30) is scraped and scored. The
+dashboard gets three tabs (site/data/earnings.json, mentions.json, top.json) and a
+track record (track.json, from data/ledger.csv via ledger.py).
 """
 import argparse
 import csv
@@ -38,6 +38,7 @@ import requests
 
 from edge import compute_edges
 from mention_history import attach_history
+import ledger
 
 log = logging.getLogger("scraper")
 
@@ -404,47 +405,53 @@ def load_previous_prices(out_dir, today):
     return prev
 
 
-SITE_TOP_N = 5000  # per source, per dashboard sort order
+TOP_N = 400            # markets in the "Top edges" tab
+TOP_MIN_EDGE = 0.05
 
 
-def site_subset(rows, top_n=SITE_TOP_N):
-    """Kalshi + Polymarket have 300k+ open markets: far too many for one JSON file.
-    Keep, per source, the top_n rows for each way the dashboard sorts (edge score,
-    edge score excluding 'thin', 24h volume, total volume). Full data stays in the CSVs."""
-    score = lambda r: (r["edge"] * r["conf"]) if r.get("edge") is not None and r.get("conf") is not None else -1
-    keys = [
-        score,
-        lambda r: score(r) if r.get("basis") != "thin" else -1,
-        lambda r: r.get("volume_24h") or 0,
-        lambda r: r.get("volume") or 0,
-    ]
-    by_source = {}
-    for r in rows:
-        by_source.setdefault(r["source"], []).append(r)
-    keep = set()
-    for group in by_source.values():
-        if len(group) <= top_n:
-            keep.update(map(id, group))
-            continue
-        for key in keys:
-            keep.update(id(r) for r in sorted(group, key=key, reverse=True)[:top_n] if key(r) > 0)
-    return [r for r in rows if id(r) in keep]
+def category(r):
+    return "earnings" if is_earnings_mention(r) else "mentions" if is_mention(r) else "other"
 
 
-def write_site(rows, site_dir, out_dir, day, snap, counts, failed):
-    """Compact JSON the dashboard (site/index.html) reads."""
+def build_tabs(rows, now):
+    """The dashboard's three market tabs. Top edges = the model's best calls across
+    every real-money market: a real signal (not 'thin'), event not already over."""
+    score = lambda r: (r.get("edge") or 0) * (r.get("conf") or 0)
+
+    def upcoming(r):
+        try:
+            t = dt.datetime.fromisoformat(str(r.get("decision_time")).replace("Z", "+00:00"))
+        except ValueError:
+            return True
+        return (t if t.tzinfo else t.replace(tzinfo=dt.timezone.utc)) >= now
+
+    top = [r for r in rows if r.get("real_money") and r.get("basis") not in (None, "", "thin")
+           and r.get("side") and (r.get("edge") or 0) >= TOP_MIN_EDGE and upcoming(r)]
+    top.sort(key=score, reverse=True)
+    return {
+        "earnings": [r for r in rows if is_earnings_mention(r)],
+        "mentions": [r for r in rows if is_mention(r)],
+        "top": top[:TOP_N],
+    }
+
+
+def write_site(tabs, site_dir, out_dir, day, snap, scraped, failed):
+    """One compact JSON per dashboard tab (site/data/<tab>.json)."""
     prev = load_previous_prices(out_dir, day)
     rnd = lambda x: round(x, 4) if isinstance(x, float) else x
-    packed = []
-    for r in site_subset(rows):
-        r = dict(r, prev_price=prev.get((r["source"], str(r["market_id"]))))
-        packed.append([rnd(r.get(k)) for k in SITE_FIELDS])
     os.makedirs(os.path.join(site_dir, "data"), exist_ok=True)
-    payload = {"generated": snap, "day": day, "counts": counts, "failed": failed,
-               "fields": SITE_FIELDS, "rows": packed}
-    with open(os.path.join(site_dir, "data", "latest.json"), "w", encoding="utf-8") as fh:
-        json.dump(payload, fh, separators=(",", ":"))
-    log.info("wrote dashboard data: %d rows", len(packed))
+    for name, rows in tabs.items():
+        counts = {}
+        packed = []
+        for r in rows:
+            counts[r["source"]] = counts.get(r["source"], 0) + 1
+            r = dict(r, prev_price=prev.get((r["source"], str(r["market_id"]))))
+            packed.append([rnd(r.get(k)) for k in SITE_FIELDS])
+        payload = {"generated": snap, "day": day, "counts": counts, "scraped": scraped,
+                   "failed": failed, "fields": SITE_FIELDS, "rows": packed}
+        with open(os.path.join(site_dir, "data", f"{name}.json"), "w", encoding="utf-8") as fh:
+            json.dump(payload, fh, separators=(",", ":"))
+        log.info("wrote %s tab: %d rows", name, len(packed))
 
 
 def main():
@@ -454,10 +461,7 @@ def main():
     ap.add_argument("--db", help="optional SQLite file to append snapshots to")
     ap.add_argument("--site", default="site", help="dashboard folder (writes data/latest.json); '' to skip")
     ap.add_argument("--max-pages", type=int, default=200, help="page cap per source")
-    ap.add_argument("--all-markets", action="store_true",
-                    help="keep every market, ignoring --topic")
-    ap.add_argument("--topic", choices=TOPICS, default="earnings",
-                    help="earnings = earnings-call mention markets only (default); mentions = all mention markets")
+    ap.add_argument("--no-ledger", action="store_true", help="don't update the track record")
     ap.add_argument("--horizon-days", type=int, default=30,
                     help="only keep markets decided within this many days (0 = no limit)")
     ap.add_argument("--keyword", action="append", default=[],
@@ -482,14 +486,11 @@ def main():
                 rows = SOURCES[name](snap, pages)
             for r in rows:
                 r["decision_time"] = decision_time(r)
-            if not args.all_markets:
-                rows = [r for r in rows if TOPICS[args.topic](r)]
             if horizon:
                 rows = [r for r in rows if within(r["decision_time"], horizon)]
             if kws:
                 rows = [r for r in rows
                         if any(k in f"{r['title']} {r['outcome']}".lower() for k in kws)]
-            write_csv(rows, os.path.join(args.out, day, f"{name}.csv.gz"))
             all_rows += rows
             counts[name] = len(rows)
             log.info("%-10s %6d rows", name, len(rows))
@@ -501,11 +502,26 @@ def main():
         write_sqlite(all_rows, args.db)
         log.info("appended %d rows to %s", len(all_rows), args.db)
 
-    if args.site and all_rows:
+    if all_rows:
         # past results per word, for the history-based fair value (mention markets only)
         attach_history([r for r in all_rows if is_mention(r)], get_json)
         compute_edges(all_rows)
-        write_site(all_rows, args.site, args.out, day, snap, counts, failed)
+        tabs = build_tabs(all_rows, now)
+        # raw snapshot of every market shown on the dashboard (all open markets would
+        # be ~7MB/day of git history); the previous-price arrows read these
+        shown = {id(r): r for rows in tabs.values() for r in rows}.values()
+        for name in args.sources:
+            if name not in failed:
+                write_csv([r for r in shown if r["source"] == name],
+                          os.path.join(args.out, day, f"{name}.csv.gz"))
+        if args.site:
+            write_site(tabs, args.site, args.out, day, snap, counts, failed)
+        if not args.no_ledger:
+            entries = ledger.load()
+            ledger.settle(entries, session)
+            ledger.record(entries, list(shown), snap, category)
+            ledger.save(entries)
+            ledger.summarize(entries, os.path.join(args.site or "site", "data", "track.json"), snap)
 
     if failed and len(failed) == len(args.sources):
         raise SystemExit("all sources failed")

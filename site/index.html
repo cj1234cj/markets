@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
-<title>Earnings-call mentions</title>
+<title>Market edges</title>
 <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>🎯</text></svg>">
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
@@ -89,6 +89,26 @@ li.m{display:grid;grid-template-columns:1fr auto;gap:4px 16px;padding:14px 0;bor
 .tokenbox a{color:var(--yes)}
 .tokenbox input{flex:1;min-width:0;font:inherit;font-size:16px;padding:8px 10px;border:1px solid var(--line);border-radius:8px;background:var(--bg);color:var(--ink)}
 .linkbtn{font:inherit;font-size:12.5px;background:none;border:0;color:var(--muted);text-decoration:underline;cursor:pointer;padding:0}
+.tabs{display:flex;gap:4px;overflow-x:auto;border-bottom:1px solid var(--line);margin:0 0 4px;scrollbar-width:none}
+.tabs::-webkit-scrollbar{display:none}
+.tab{font:inherit;font-weight:600;font-size:14px;padding:9px 12px;border:0;border-bottom:2px solid transparent;
+  background:none;color:var(--muted);cursor:pointer;white-space:nowrap}
+.tab[aria-selected="true"]{color:var(--ink);border-bottom-color:var(--ink)}
+.tabnote{color:var(--muted);font-size:13px;margin:8px 0 0}
+.cards{display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:10px;margin:14px 0}
+.card{background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:12px}
+.card .k{color:var(--muted);font-size:12.5px}
+.card .v{font-size:22px;font-weight:700;letter-spacing:-.01em}
+.pos{color:var(--up)} .neg{color:var(--down)}
+h2{font-size:17px;margin:22px 0 8px}
+.tbl{width:100%;overflow-x:auto}
+table{border-collapse:collapse;width:100%;font-size:13.5px;background:var(--panel);border:1px solid var(--line);border-radius:10px}
+th,td{text-align:right;padding:7px 10px;border-bottom:1px solid var(--line);white-space:nowrap}
+th:first-child,td:first-child{text-align:left}
+th{color:var(--muted);font-weight:600;font-size:12.5px}
+tr:last-child td{border-bottom:0}
+td.t{text-align:left;white-space:normal;min-width:220px}
+td.t a{color:inherit}
 @media (min-width:640px){header h1{font-size:38px}}
 </style>
 </head>
@@ -96,7 +116,7 @@ li.m{display:grid;grid-template-columns:1fr auto;gap:4px 16px;padding:14px 0;bor
 <div class="wrap">
   <header>
     <div class="head">
-      <h1>Earnings-call mentions</h1>
+      <h1>Market edges</h1>
       <button class="refresh" id="refresh">Refresh now</button>
     </div>
     <p class="updated" id="updated">Loading today's snapshot…</p>
@@ -106,9 +126,19 @@ li.m{display:grid;grid-template-columns:1fr auto;gap:4px 16px;padding:14px 0;bor
       <p class="hint"><a href="https://github.com/settings/personal-access-tokens/new" target="_blank" rel="noopener">Create a fine-grained token</a>, give it access to this repository only, and set Actions to "Read and write".</p>
       <div class="row"><input type="password" id="token" placeholder="github_pat_…" autocomplete="off" aria-label="GitHub token"><button class="chip" id="savetoken">Save and refresh</button></div>
     </div>
+    <nav class="tabs" role="tablist" aria-label="Views">
+      <button class="tab" role="tab" data-tab="earnings">Earnings calls</button>
+      <button class="tab" role="tab" data-tab="mentions">All mentions</button>
+      <button class="tab" role="tab" data-tab="top">Top edges</button>
+      <button class="tab" role="tab" data-tab="track">Track record</button>
+    </nav>
+    <p class="tabnote" id="tabnote"></p>
     <div class="counts" id="counts"></div>
   </header>
 
+  <section id="trackview" hidden></section>
+
+  <div id="marketview">
   <div class="controls">
     <input type="search" id="q" placeholder="Search, e.g. Apple, Tesla, tariff, AI" aria-label="Search markets">
     <div class="row" id="sources"></div>
@@ -130,6 +160,7 @@ li.m{display:grid;grid-template-columns:1fr auto;gap:4px 16px;padding:14px 0;bor
   <p class="summary" id="summary"></p>
   <ol id="list"></ol>
   <button class="more" id="more" hidden>Show 50 more</button>
+  </div>
   <p class="summary"><button class="linkbtn" id="forget" hidden>Remove saved GitHub token from this browser</button></p>
 </div>
 
@@ -148,12 +179,39 @@ const money = x => x == null ? null : x >= 1e6 ? (x/1e6).toFixed(1)+"M" : x >= 1
 const date = s => { if(!s) return null; const d = new Date(s); return isNaN(d) ? null :
   d.toLocaleDateString(undefined,{month:"short",day:"numeric",year: d.getFullYear()!==new Date().getFullYear()?"numeric":undefined}); };
 
+const TABS = {
+  earnings: {note:"Earnings-call mention markets deciding in the next 30 days. Fair value = how often the word was said on past calls (your transcripts where saved, else Kalshi results).", history:true},
+  mentions: {note:"Every mention market (earnings calls, speeches, rallies, Fed, debates) deciding in the next 30 days.", history:true},
+  top:      {note:"The model's biggest edges across every real-money market deciding in the next 30 days, from any signal. Each call is logged in the Track record the first time it shows up.", history:false},
+  track:    {note:"Every call the model has made, logged when first flagged and scored when the market settles. Profit is per $1 contract at the price shown when the call was logged, after fees."},
+};
+state.tab = TABS[location.hash.slice(1)] ? location.hash.slice(1) : "earnings";
+
+function selectTab(tab){
+  state.tab = tab;
+  history.replaceState(null, "", "#" + tab);
+  document.querySelectorAll(".tab").forEach(b => b.setAttribute("aria-selected", b.dataset.tab === tab));
+  $("tabnote").textContent = TABS[tab].note;
+  const track = tab === "track";
+  $("trackview").hidden = !track; $("marketview").hidden = track;
+  $("history").hidden = !TABS[tab].history;
+  state.history = !!TABS[tab].history;
+  $("history").setAttribute("aria-pressed", state.history);
+  rows = []; $("list").innerHTML = ""; $("summary").textContent = "Loading…"; $("counts").innerHTML = "";
+  $("more").hidden = true;
+  load();
+}
+document.querySelectorAll(".tab").forEach(b => b.onclick = () => selectTab(b.dataset.tab));
+
 let lastLoad = 0;
 async function load(silent){
+  if(state.tab === "track") return loadTrack(silent);
+  const tab = state.tab;
   try{
-    const res = await fetch(`data/latest.json?t=${Date.now()}`, {cache:"no-store"});
+    const res = await fetch(`data/${tab}.json?t=${Date.now()}`, {cache:"no-store"});
     if(!res.ok) throw new Error(res.status);
     const data = await res.json();
+    if(tab !== state.tab) return data.generated;   // tab changed while loading
     const F = data.fields;
     rows = data.rows.map(r => {
       const o = {}; F.forEach((k,i) => o[k] = r[i]);
@@ -231,8 +289,7 @@ function item(r){
     money(r.volume) ? `<span>${money(r.volume)} total</span>` : "",
     date(r.decides) ? `<span>Decides ${date(r.decides)}</span>` : "",
   ].join("");
-  const BASIS = {history:"Past results", arb:"Arbitrage", cross:"Other venue disagrees", bracket:"Outcomes add to over 100%",
-                 longshot:"Longshot bias", thin:"Thin market"};
+  const BASIS = BASIS_NAMES;
   const level = r.conf >= 0.9 ? "high" : r.conf >= 0.5 ? "medium" : "low";
   const LEVEL = {high:"High confidence", medium:"Medium confidence", low:"Low confidence"};
   const edgeHtml = r.edge == null ? "" : `<div class="edge">
@@ -246,6 +303,87 @@ function item(r){
     <div class="price"><b>${pct(p)}</b>${chg}</div>
     ${edgeHtml}${refHtml}
     <div class="bar" aria-hidden="true">${sp}${px}</div><div class="meta">${meta}</div></li>`;
+}
+
+/* ---------- Track record ---------- */
+const BASIS_NAMES = {history:"Past results", arb:"Arbitrage", cross:"Other venue disagrees",
+  bracket:"Outcomes add to over 100%", longshot:"Longshot bias", thin:"Thin market"};
+const CATEGORY_NAMES = {earnings:"Earnings calls", mentions:"Other mentions", other:"Other markets"};
+const signed = x => x == null ? "–" : `<span class="${x > 0 ? "pos" : x < 0 ? "neg" : ""}">${x > 0 ? "+" : ""}${(x*100).toFixed(1)}¢</span>`;
+
+async function loadTrack(silent){
+  try{
+    const res = await fetch(`data/track.json?t=${Date.now()}`, {cache:"no-store"});
+    if(!res.ok) throw new Error(res.status);
+    const d = await res.json();
+    if(state.tab !== "track") return d.generated;
+    renderTrack(d);
+    const g = new Date(d.generated);
+    $("updated").textContent = `Updated ${g.toLocaleString(undefined,{dateStyle:"medium",timeStyle:"short"})}. Refreshes automatically every day.`;
+    lastLoad = Date.now();
+    return d.generated;
+  }catch(e){
+    if(!silent) $("trackview").innerHTML = `<p class="empty">No track record yet. It starts with the next daily run.</p>`;
+    return null;
+  }
+}
+
+function groupTable(title, group, names){
+  const keys = Object.keys(group || {});
+  if(!keys.length) return "";
+  const ORDER = ["5–10¢", "10–20¢", "20–35¢", "35¢+"];
+  const sorted = keys.every(k => ORDER.includes(k)) ? keys.sort((a,b) => ORDER.indexOf(a) - ORDER.indexOf(b))
+                                                     : keys.sort((a,b) => group[b].n - group[a].n);
+  const rowsHtml = sorted.map(k => {
+    const s = group[k];
+    const brier = s.brier_model == null ? "–" :
+      `${s.brier_model.toFixed(3)} vs ${s.brier_market.toFixed(3)}`;
+    return `<tr><td>${esc((names && names[k]) || k)}</td><td>${s.n}</td><td>${signed(s.pred_edge)}</td>
+      <td>${signed(s.pnl)}</td><td>${(s.win_rate*100).toFixed(0)}%</td><td>${brier}</td></tr>`;
+  }).join("");
+  return `<h2>${title}</h2><div class="tbl"><table><thead><tr><th></th><th>Settled</th><th>Predicted edge</th>
+    <th>Actual profit</th><th>Won</th><th title="Brier score: squared error of the probability vs what happened. The model's fair value against the market's own price when the call was logged.">Error, model vs market (lower wins)</th></tr></thead>
+    <tbody>${rowsHtml}</tbody></table></div>`;
+}
+
+function callsTable(title, d, list, settled){
+  if(!list.length) return "";
+  const F = d.fields;
+  const rowsHtml = list.slice(0, 100).map(a => {
+    const e = {}; F.forEach((k,i) => e[k] = a[i]);
+    const name = e.url ? `<a href="${esc(e.url)}" target="_blank" rel="noopener">${esc(e.title)}</a>` : esc(e.title);
+    const out = e.outcome && !/^yes$/i.test(e.outcome) ? ` · ${esc(e.outcome)}` : "";
+    return `<tr><td class="t">${name}${out}</td><td>${esc(BASIS_NAMES[e.basis] || e.basis)}</td>
+      <td>Buy ${esc(e.side)} at ${pct(+e.price)}</td><td>${pct(+e.fair)}</td><td>${signed(+e.edge)}</td>
+      ${settled ? `<td>${esc((e.result||"").toUpperCase())}</td><td>${signed(+e.pnl)}</td>` : `<td>${date(e.decision_time) || "–"}</td>`}</tr>`;
+  }).join("");
+  return `<h2>${title}</h2><div class="tbl"><table><thead><tr><th>Market</th><th>Signal</th><th>Call</th><th>Fair (YES)</th><th>Edge</th>
+    ${settled ? "<th>Result</th><th>Profit</th>" : "<th>Decides</th>"}</tr></thead><tbody>${rowsHtml}</tbody></table></div>`;
+}
+
+function renderTrack(d){
+  const t = d.totals || {n:0};
+  const cards = [
+    ["Calls settled", t.n.toLocaleString()],
+    ["Still open", (d.open||0).toLocaleString()],
+    ["Avg predicted edge", t.n ? signed(t.pred_edge) : "–"],
+    ["Avg actual profit", t.n ? signed(t.pnl) : "–"],
+    ["Total profit, $1 each", t.n ? `<span class="${t.total>=0?"pos":"neg"}">${t.total>=0?"+":"−"}$${Math.abs(t.total).toFixed(2)}</span>` : "–"],
+    ["Won", t.n ? `${(t.win_rate*100).toFixed(0)}%` : "–"],
+  ].map(([k,v]) => `<div class="card"><div class="k">${k}</div><div class="v">${v}</div></div>`).join("");
+  const F = d.fields;
+  const calib = Object.entries(d.calibration || {}).map(([k,c]) =>
+    `<tr><td>${esc(BASIS_NAMES[k] || k)}</td><td>${c.n}</td><td>${(c.delivered*100).toFixed(0)}%</td><td>×${c.factor.toFixed(2)}</td></tr>`).join("");
+  $("trackview").innerHTML = `<div class="cards">${cards}</div>
+    ${t.n ? "" : `<p class="summary">Nothing has settled yet. Calls are being logged; results fill in as markets decide.</p>`}
+    ${groupTable("By signal type", d.groups?.basis, BASIS_NAMES)}
+    ${groupTable("By market type", d.groups?.category, CATEGORY_NAMES)}
+    ${groupTable("By edge size", d.groups?.["edge size"])}
+    ${groupTable("By venue", d.groups?.source, NAMES)}
+    ${calib ? `<h2>How the model adjusts</h2><p class="summary">Each signal type's confidence is scaled by how much of its predicted edge it has actually delivered, blended with no change until it has about 30 settled calls.</p>
+      <div class="tbl"><table><thead><tr><th>Signal</th><th>Settled</th><th>Edge delivered</th><th>Confidence scaled</th></tr></thead><tbody>${calib}</tbody></table></div>` : ""}
+    ${callsTable("Recently settled", d, d.settled || [], true)}
+    ${callsTable("Open calls, deciding soonest", d, d.pending || [], false)}`;
 }
 
 function more(){
@@ -340,7 +478,7 @@ document.addEventListener("visibilitychange", () => {
   if(document.visibilityState === "visible" && !refreshing && Date.now() - lastLoad > 15*60*1000) load(true);
 });
 
-load();
+selectTab(state.tab);
 </script>
 </body>
 </html>

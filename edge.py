@@ -27,14 +27,17 @@ confidence-weighted edge (edge x confidence), and the page ranks by that.
 
 Tune the constants below once you have resolved results to check against.
 """
+import json
 import math
+import os
 import re
 from collections import defaultdict
 
 # ---------- assumptions you can tune
 LONGSHOT_MAX = 0.15     # YES price at or below this counts as a longshot
 LONGSHOT_BIAS = 0.20    # assume longshots are overpriced by 20% of their price
-MATCH_MIN_SIMILARITY = 0.55
+MATCH_MIN_SIMILARITY = 0.7
+CROSS_MIN_HOURS = 24      # skip cross-venue checks on markets deciding sooner than this
 MATCH_MAX_CLOSE_GAP_DAYS = 10
 HISTORY_MIN_EVENTS = 3  # past settled events needed before trusting a hit rate
 HISTORY_DECAY = 0.85    # weight of each older event vs the next newer one
@@ -80,6 +83,17 @@ def mid(r):
     return r.get("yes_price")
 
 
+TIGHT_SPREAD = 0.10
+
+
+def tight_mid(r):
+    """Mid price only when both sides are quoted within TIGHT_SPREAD; a midpoint of a
+    1c/99c quote (or a stale last trade) says nothing about the real price."""
+    if has_bid(r) and has_ask(r) and 0 <= r["yes_ask"] - r["yes_bid"] <= TIGHT_SPREAD:
+        return (r["yes_ask"] + r["yes_bid"]) / 2
+    return None
+
+
 def yes_cost(r):
     """Price to buy YES now. None if the venue shows an order book with no sellers."""
     if r.get("yes_ask") is None:
@@ -106,14 +120,32 @@ def edge_for(r, side, fair):
     return None if c is None or c >= 1 else (1 - fair) - c - fee(r["source"], c)
 
 
+def load_calibration():
+    """Per signal type: how much of its predicted edge it has actually delivered
+    (ledger.py, from settled calls). 1.0 = no adjustment yet."""
+    path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "data", "calibration.json")
+    try:
+        with open(path, encoding="utf-8") as fh:
+            return {k: v["factor"] for k, v in json.load(fh).get("basis", {}).items()}
+    except (OSError, ValueError, KeyError, TypeError):
+        return {}
+
+
+CALIBRATION = {}
+
+
 def offer(r, side, fair, basis, ref="", ref_url="", conf=None):
     e = edge_for(r, side, fair)
     if e is None or e <= 0:
         return
-    c = CONF[basis] if conf is None else conf
+    short = basis.split("_")[0]
+    c = (CONF[basis] if conf is None else conf) * CALIBRATION.get(short, 1.0)
     if e * c > r.get("_score", -1):
-        r.update(edge=round(e, 4), side=side, basis=basis.split("_")[0], conf=c,
-                 ref=ref, ref_url=ref_url, _score=e * c)
+        r.update(edge=round(e, 4), side=side, basis=short, conf=round(c, 3),
+                 ref=ref, ref_url=ref_url, _score=e * c,
+                 # for the track record (ledger.py)
+                 fair=round(fair, 4), price=yes_cost(r) if side == "YES" else no_cost(r),
+                 market_prob=mid(r))
 
 
 def cents(x):
@@ -143,8 +175,30 @@ def close_days(r):
         return None
 
 
+def outcome_tokens(r):
+    o = (r.get("outcome") or "").lower()
+    if not o or o in ("yes", "no"):
+        return None
+    return {w for w in re.sub(r"[^a-z0-9.]", " ", o).split() if w not in STOP and len(w) > 1}
+
+
+def soon(r, hours=CROSS_MIN_HOURS):
+    """Deciding within `hours`: live games and same-day prices move faster than the
+    gap between scraping one venue and the next, so their prices aren't comparable."""
+    from datetime import datetime, timezone
+    t = r.get("decision_time") or r.get("close_time")
+    try:
+        t = datetime.fromisoformat(str(t).replace("Z", "+00:00"))
+    except ValueError:
+        return False
+    if t.tzinfo is None:
+        t = t.replace(tzinfo=timezone.utc)
+    return (t - datetime.now(timezone.utc)).total_seconds() < hours * 3600
+
+
 def cross_venue(rows):
-    live = [r for r in rows if mid(r) is not None]
+    # only markets with a real two-sided price, not deciding in the next day
+    live = [r for r in rows if tight_mid(r) is not None and not soon(r)]
     for r in live:
         r["_t"] = tokens(r)
         r["_n"] = key_numbers(r["_t"])
@@ -168,12 +222,16 @@ def cross_venue(rows):
                 continue
             if r["_d"] and o["_d"] and abs(r["_d"] - o["_d"]) > MATCH_MAX_CLOSE_GAP_DAYS:
                 continue
+            # named outcomes must be the same thing ("Vukic" vs "Kotov" is the other side)
+            ra, oa_ = outcome_tokens(r), outcome_tokens(o)
+            if ra is not None and oa_ is not None and not (ra & oa_):
+                continue
             sim = len(r["_t"] & o["_t"]) / len(r["_t"] | o["_t"])
             if sim >= MATCH_MIN_SIMILARITY and sim > best.get(o["source"], (0, None))[0]:
                 best[o["source"]] = (sim, o)
 
         for src, (sim, o) in best.items():
-            fair, play = mid(o), not o.get("real_money")
+            fair, play = tight_mid(o), not o.get("real_money")
             label = f"{VENUE[src]} at {cents(fair)}: {o.get('title')}" + (f" ({o.get('outcome')})" if o.get("outcome") and o["outcome"].lower() != "yes" else "")
             for side in ("YES", "NO"):
                 offer(r, side, fair, "cross_play" if play else "cross", label, o.get("url", ""))
@@ -194,10 +252,13 @@ def cross_venue(rows):
 
 # ---------- 2. Kalshi strike ladders out of order
 def ladders(rows):
+    # Only the same question at different strikes is a ladder: one event can hold several
+    # (Benin vs Argentina margins, rain in each city), so key on the wording minus numbers.
     groups = defaultdict(list)
     for r in rows:
         if r["source"] == "kalshi" and r.get("strike_type") in ("greater", "greater_or_equal") and r.get("floor_strike") is not None:
-            groups[r["event_id"]].append(r)
+            template = re.sub(r"\d[\d,.]*", "#", f"{r.get('title') or ''}|{r.get('outcome') or ''}".lower())
+            groups[(r["event_id"], template)].append(r)
     for legs in groups.values():
         legs.sort(key=lambda r: r["floor_strike"])
         for i, lo in enumerate(legs):            # P(above lo) must be >= P(above hi)
@@ -216,16 +277,21 @@ def brackets(rows):
     for legs in groups.values():
         if len(legs) < 2:
             continue
-        total = sum(mid(r) for r in legs)
         bids = sum(r.get("yes_bid") or 0 for r in legs)
+        if bids > 1.0:      # executable whatever the spreads: NO on every leg pays n-1
+            for r in legs:
+                offer(r, "NO", r["yes_bid"] if has_bid(r) else 0, "arb",
+                      f"Buy NO on every outcome: the {len(legs)} YES bids sum to {bids * 100:.0f}%")
+        mids = [tight_mid(r) for r in legs]
+        if any(m is None for m in mids):
+            continue        # a leg without a real two-sided price makes the total meaningless
+        total = sum(mids)
         if total <= 1.0:
             continue        # can't tell which leg is cheap if the list may be incomplete
-        for r in legs:
-            fair = mid(r) / total
-            label = f"{len(legs)} outcomes add up to {total * 100:.0f}%; fair after removing the excess ≈ {cents(fair)}"
-            if bids > 1.0:
-                offer(r, "NO", fair, "arb", f"Buy NO on every outcome: bids sum to {bids * 100:.0f}%. " + label)
-            offer(r, "NO", fair, "bracket", label)
+        for r, m in zip(legs, mids):
+            fair = m / total
+            offer(r, "NO", fair, "bracket",
+                  f"{len(legs)} outcomes add up to {total * 100:.0f}%; fair after removing the excess ≈ {cents(fair)}")
 
 
 # ---------- 3b. mention markets priced from past results (mention_history.py)
@@ -280,8 +346,9 @@ def longshots_and_thin(rows):
         m = mid(r)
         if m is None:
             continue
-        if 0 < m <= LONGSHOT_MAX and r.get("real_money"):
-            offer(r, "NO", m * (1 - LONGSHOT_BIAS), "longshot",
+        tm = tight_mid(r)
+        if tm is not None and 0 < tm <= LONGSHOT_MAX and r.get("real_money"):
+            offer(r, "NO", tm * (1 - LONGSHOT_BIAS), "longshot",
                   f"Cheap YES contracts tend to be overpriced; assumes about {LONGSHOT_BIAS:.0%} too high")
         if r.get("_score", -1) > 0:
             continue
@@ -296,6 +363,8 @@ def longshots_and_thin(rows):
 
 
 def compute_edges(rows):
+    CALIBRATION.clear()
+    CALIBRATION.update(load_calibration())
     for r in rows:
         r["_score"] = -1
     cross_venue(rows)
