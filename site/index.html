@@ -113,6 +113,7 @@ li.m{display:grid;grid-template-columns:1fr auto;gap:4px 16px;padding:14px 0;bor
     <input type="search" id="q" placeholder="Search, e.g. Trump, Powell, Nvidia, tariff" aria-label="Search markets">
     <div class="row" id="sources"></div>
     <div class="row">
+      <button class="chip preset" id="history" aria-pressed="true" title="Fair value from how often the word was said at past events in the same series, at least 20¢ from today's price">History-backed ≥20¢</button>
       <button class="chip preset" id="realmoney" aria-pressed="true">Real money only</button>
       <button class="chip preset" id="solid" aria-pressed="false" title="Hide markets where the edge is only an estimate from thin trading">Solid signals only</button>
       <select id="sort" aria-label="Sort by">
@@ -138,7 +139,8 @@ const PLAY_MONEY = new Set(["manifold"]);
 const PAGE = 50;
 
 let rows = [], view = [], shown = 0;
-const state = { q:"", sources:new Set(Object.keys(NAMES)), realMoney:true, solid:false, sort:"edge" };
+const state = { q:"", sources:new Set(Object.keys(NAMES)), realMoney:true, solid:false, history:true, sort:"edge" };
+const MIN_EDGE = 0.20;
 const $ = id => document.getElementById(id);
 
 const pct = x => x == null ? "–" : (x*100 >= 1 || x === 0 ? Math.round(x*100) : (x*100).toFixed(1)) + "¢";
@@ -194,6 +196,7 @@ function apply(){
   view = rows.filter(r =>
     state.sources.has(r.source) &&
     !(state.realMoney && PLAY_MONEY.has(r.source)) &&
+    (!state.history || (r.basis === "history" && r.edge >= MIN_EDGE)) &&
     (!state.solid || (r.conf ?? 0) >= 0.5) &&
     terms.every(t => r.hay.includes(t)));
   const by = {
@@ -214,7 +217,9 @@ function apply(){
 function esc(s){ return String(s??"").replace(/[&<>"]/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;"}[c])); }
 
 function item(r){
-  const p = r.yes_price, bid = r.yes_bid, ask = r.yes_ask;
+  const bid = r.yes_bid, ask = r.yes_ask;
+  // never traded: last price is a meaningless 0, so show the bid/ask midpoint
+  const p = (!r.volume && bid != null && ask > 0 && ask >= bid) ? (bid + ask) / 2 : r.yes_price;
   const chg = r.move == null ? "" : Math.abs(r.move) < 0.005 ? `<span class="chg flat">no change</span>` :
     `<span class="chg ${r.move>0?"up":"down"}">${r.move>0?"▲":"▼"} ${Math.abs(r.move*100).toFixed(Math.abs(r.move)<0.01?1:0)}</span>`;
   const sp = (bid!=null && ask!=null && ask>=bid) ? `<span class="sp" style="left:${bid*100}%;width:${Math.max((ask-bid)*100,.5)}%"></span>` : "";
@@ -226,7 +231,7 @@ function item(r){
     money(r.volume) ? `<span>${money(r.volume)} total</span>` : "",
     date(r.decides) ? `<span>Decides ${date(r.decides)}</span>` : "",
   ].join("");
-  const BASIS = {arb:"Arbitrage", cross:"Other venue disagrees", bracket:"Outcomes add to over 100%",
+  const BASIS = {history:"Past results", arb:"Arbitrage", cross:"Other venue disagrees", bracket:"Outcomes add to over 100%",
                  longshot:"Longshot bias", thin:"Thin market"};
   const level = r.conf >= 0.9 ? "high" : r.conf >= 0.5 ? "medium" : "low";
   const LEVEL = {high:"High confidence", medium:"Medium confidence", low:"Low confidence"};
@@ -252,6 +257,7 @@ let t; $("q").oninput = e => { clearTimeout(t); t = setTimeout(() => { state.q =
 $("sort").onchange = e => { state.sort = e.target.value; apply(); };
 $("more").onclick = more;
 $("solid").onclick = e => { state.solid = !state.solid; e.currentTarget.setAttribute("aria-pressed", state.solid); apply(); };
+$("history").onclick = e => { state.history = !state.history; e.currentTarget.setAttribute("aria-pressed", state.history); apply(); };
 $("realmoney").onclick = e => { state.realMoney = !state.realMoney; e.currentTarget.setAttribute("aria-pressed", state.realMoney); apply(); };
 /* ---------- Refresh now: triggers the GitHub Action, waits, reloads ---------- */
 const REPO = (() => {

@@ -11,6 +11,9 @@ confidence-weighted edge (edge x confidence), and the page ranks by that.
             crossed strike ladders, brackets whose YES bids sum above $1, or
             buying here below the bid on another real-money venue.
   ladder    (folded into arb) Kalshi "above X" markets priced out of order.
+  history   Mention markets: fair value = how often the same word was said at
+            past settled events in the same Kalshi series (needs 3+ events).
+            Checkable: each past event can be verified against its transcript.
   cross     Same question on another venue at a different price. Fair value =
             the other venue's mid price. Match is fuzzy: always check the
             linked market is truly the same question and resolution date.
@@ -33,7 +36,15 @@ LONGSHOT_MAX = 0.15     # YES price at or below this counts as a longshot
 LONGSHOT_BIAS = 0.20    # assume longshots are overpriced by 20% of their price
 MATCH_MIN_SIMILARITY = 0.55
 MATCH_MAX_CLOSE_GAP_DAYS = 10
-CONF = {"arb": 1.0, "cross": 0.75, "cross_play": 0.35, "bracket": 0.6, "longshot": 0.3, "thin": 0.2}
+HISTORY_MIN_EVENTS = 3  # past settled events needed before trusting a hit rate
+HISTORY_DECAY = 0.85    # weight of each older event vs the next newer one
+HISTORY_RECENT = 3      # the edge must also hold on just the last few events
+# Series where every event has the same format, so past results are comparable and
+# checkable against transcripts: earnings calls, FOMC press conferences, and
+# "say it during this week/month" windows. Other mention series (rallies, interviews,
+# debates, speeches) mix event types and Kalshi picks words to fit each event.
+SAME_FORMAT = re.compile(r"^KX(EARNINGSMENTION|FEDMENTION|TRUMPSAY)")
+CONF = {"arb": 1.0, "history": 0.8, "history_mixed": 0.45, "cross": 0.75, "cross_play": 0.35, "bracket": 0.6, "longshot": 0.3, "thin": 0.2}
 VENUE = {"kalshi": "Kalshi", "polymarket": "Polymarket", "predictit": "PredictIt", "manifold": "Manifold"}
 
 STOP = set("""the a an of in on at by to for will be is are and or vs before after during with what who which
@@ -217,6 +228,51 @@ def brackets(rows):
             offer(r, "NO", fair, "bracket", label)
 
 
+# ---------- 3b. mention markets priced from past results (mention_history.py)
+def history(rows):
+    """Fair = how often this word came up at past events in the same series.
+    Recent events count more (speakers change habits, e.g. a new Fed chair), and
+    one pseudo-event pulls toward 50%: (sum w*yes + 0.5) / (sum w + 1).
+
+    Skipped: events already over (the outcome is known, the market just hasn't
+    settled) and markets already priced as decided (bid >= 95c / ask <= 3c),
+    which usually means the word was already said in an in-progress window."""
+    from datetime import datetime, timezone
+    now = datetime.now(timezone.utc)
+    months = "Jan Feb Mar Apr May Jun Jul Aug Sep Oct Nov Dec".split()
+    short = lambda d: f"{months[int(d[5:7]) - 1]} {int(d[8:10])}" if len(d) == 10 else d
+    for r in rows:
+        hist = r.get("hist") or []
+        if len(hist) < HISTORY_MIN_EVENTS:
+            continue
+        try:
+            if datetime.fromisoformat(str(r.get("decision_time")).replace("Z", "+00:00")) < now:
+                continue
+        except ValueError:
+            continue
+        if (r.get("yes_bid") or 0) >= 0.95 or (has_ask(r) and r["yes_ask"] <= 0.03):
+            continue
+        weights = [HISTORY_DECAY ** i for i in range(len(hist))]   # hist is newest first
+        hits = sum(w for w, (_, res, _) in zip(weights, hist) if res == "yes")
+        fair = (hits + 0.5) / (sum(weights) + 1)
+        recent = hist[:HISTORY_RECENT]
+        fair_recent = (sum(1 for _, res, _ in recent if res == "yes") + 0.5) / (len(recent) + 1)
+        yes = sum(1 for _, res, _ in hist if res == "yes")
+        shown = ", ".join(f"{short(d)}{'' if d[:4] == str(now.year) else ' ' + chr(39) + d[2:4]} "
+                          f"{'✓' if res == 'yes' else '✗'}" for d, res, _ in hist[:8])
+        more = f" +{len(hist) - 8} more" if len(hist) > 8 else ""
+        series = str(r["market_id"]).split("-")[0]
+        same = bool(SAME_FORMAT.match(series))
+        label = (f"Said at {yes} of {len(hist)} past events: {shown}{more}. "
+                 f"Fair ≈ {cents(fair)} (recent weighted more; last {len(recent)}: {cents(fair_recent)})"
+                 + ("" if same else ". Past events vary in type, so check this event's topic"))
+        series_url = f"https://kalshi.com/markets/{series.lower()}"
+        basis = "history" if same else "history_mixed"
+        # conservative: the edge has to hold on the long-run rate AND the last few events
+        offer(r, "YES", min(fair, fair_recent), basis, label, series_url)
+        offer(r, "NO", max(fair, fair_recent), basis, label, series_url)
+
+
 # ---------- 4. longshots, 5. thin markets
 def longshots_and_thin(rows):
     for r in rows:
@@ -244,6 +300,7 @@ def compute_edges(rows):
     cross_venue(rows)
     ladders(rows)
     brackets(rows)
+    history(rows)
     longshots_and_thin(rows)
     for r in rows:
         r.pop("_score", None)

@@ -36,6 +36,7 @@ import time
 import requests
 
 from edge import compute_edges
+from mention_history import attach_history
 
 log = logging.getLogger("scraper")
 
@@ -488,6 +489,8 @@ def main():
         log.info("appended %d rows to %s", len(all_rows), args.db)
 
     if args.site and all_rows:
+        # past results per word, for the history-based fair value (mention markets only)
+        attach_history([r for r in all_rows if is_mention(r)], get_json)
         compute_edges(all_rows)
         write_site(all_rows, args.site, args.out, day, snap, counts, failed)
 
