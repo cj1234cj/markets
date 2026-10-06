@@ -263,7 +263,8 @@ def history(rows):
         more = f" +{len(hist) - 8} more" if len(hist) > 8 else ""
         series = str(r["market_id"]).split("-")[0]
         same = bool(SAME_FORMAT.match(series))
-        label = (f"Said at {yes} of {len(hist)} past events: {shown}{more}. "
+        events = "earnings calls" if series.startswith("KXEARNINGSMENTION") else "events"
+        label = (f"Said on {yes} of the last {len(hist)} {events}: {shown}{more}. "
                  f"Fair ≈ {cents(fair)} (recent weighted more; last {len(recent)}: {cents(fair_recent)})"
                  + ("" if same else ". Past events vary in type, so check this event's topic"))
         series_url = f"https://kalshi.com/markets/{series.lower()}"

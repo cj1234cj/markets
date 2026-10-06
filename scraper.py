@@ -19,8 +19,9 @@ Usage:
   python scraper.py --keyword "fed"          # keep only matching titles
   python scraper.py --all-markets --horizon-days 0   # every open market, any date
 
-By default only *mention* markets ("What will X say...", 'Will Trump say "Y"...')
-whose decision date is within --horizon-days (30) are kept.
+By default only earnings-call mention markets ("What will Apple say during their
+next earnings call?") whose decision date is within --horizon-days (30) are kept.
+--topic mentions widens that to all mention markets (speeches, rallies, Fed...).
 """
 import argparse
 import csv
@@ -127,6 +128,16 @@ def is_mention(r):
         series = str(r["market_id"]).split("-")[0]
         return ("MENTION" in series or "SAY" in series) and bool(KALSHI_MENTION_TITLE.search(title))
     return bool(MENTION_TITLE.search(title))
+
+
+def is_earnings_mention(r):
+    """Mention markets about a company's earnings call (Kalshi KXEARNINGSMENTION<TICKER>)."""
+    if r["source"] == "kalshi":
+        return str(r["market_id"]).startswith("KXEARNINGSMENTION")
+    return is_mention(r) and "earnings" in (r.get("title") or "").lower()
+
+
+TOPICS = {"earnings": is_earnings_mention, "mentions": is_mention}
 
 
 KALSHI_TICKER_DATE = re.compile(r"^(\d{2})([A-Z]{3})(\d{2})$")
@@ -444,7 +455,9 @@ def main():
     ap.add_argument("--site", default="site", help="dashboard folder (writes data/latest.json); '' to skip")
     ap.add_argument("--max-pages", type=int, default=200, help="page cap per source")
     ap.add_argument("--all-markets", action="store_true",
-                    help="keep every market, not just mention markets")
+                    help="keep every market, ignoring --topic")
+    ap.add_argument("--topic", choices=TOPICS, default="earnings",
+                    help="earnings = earnings-call mention markets only (default); mentions = all mention markets")
     ap.add_argument("--horizon-days", type=int, default=30,
                     help="only keep markets decided within this many days (0 = no limit)")
     ap.add_argument("--keyword", action="append", default=[],
@@ -470,7 +483,7 @@ def main():
             for r in rows:
                 r["decision_time"] = decision_time(r)
             if not args.all_markets:
-                rows = [r for r in rows if is_mention(r)]
+                rows = [r for r in rows if TOPICS[args.topic](r)]
             if horizon:
                 rows = [r for r in rows if within(r["decision_time"], horizon)]
             if kws:
