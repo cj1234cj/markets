@@ -1,0 +1,41 @@
+name: Publish page only
+
+# A change to the dashboard page shouldn't wait ~15 minutes for a full scrape.
+# This republishes site/ with the data files that are already live.
+on:
+  push:
+    branches: [main]
+    paths: ["site/index.html"]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+concurrency:
+  group: scrape            # same group as the scrape, so the two never overwrite each other
+  cancel-in-progress: false
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deploy.outputs.page_url }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: Reuse the data that's already live
+        run: |
+          mkdir -p site/data
+          base="https://cj1234cj.github.io/markets/data"
+          for f in earnings mentions top track; do
+            curl -fsS "$base/$f.json?t=$(date +%s)" -o "site/data/$f.json" || echo "no $f.json yet"
+          done
+          ls -la site/data
+      - uses: actions/configure-pages@v5
+      - uses: actions/upload-pages-artifact@v3
+        with:
+          path: site
+      - id: deploy
+        uses: actions/deploy-pages@v4
