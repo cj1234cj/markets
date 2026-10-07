@@ -46,7 +46,8 @@ HISTORY_DECAY = 0.85    # weight of each older event vs the next newer one
 HISTORY_RECENT = 3      # the edge must also hold on just the last few events
 # Series where every event has the same format, so past results are comparable and
 # checkable against transcripts: earnings calls and FOMC press conferences.
-# (Trump markets get no signal at all; see is_unbettable in scraper.py.) Other mention series (rallies, interviews,
+# (Political speeches, rallies, debates and TV interviews get no signal at all; see
+# is_unbettable in scraper.py.) Other rated mention series (Fed speeches, keynotes,
 # debates, speeches) mix event types and Kalshi picks words to fit each event.
 SAME_FORMAT = re.compile(r"^KX(EARNINGSMENTION|FEDMENTION)")
 CONF = {"arb": 1.0, "history": 0.8, "history_mixed": 0.45, "cross": 0.75, "cross_play": 0.35, "bracket": 0.6, "longshot": 0.3, "thin": 0.2}
@@ -137,7 +138,7 @@ CALIBRATION = {}
 
 
 def offer(r, side, fair, basis, ref="", ref_url="", conf=None):
-    if r.get("no_signal"):      # e.g. Trump mention markets: too unpredictable to bet
+    if r.get("no_signal"):      # political mention markets: agenda too loose to bet
         return
     e = edge_for(r, side, fair)
     if e is None or e <= 0:

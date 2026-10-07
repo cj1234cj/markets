@@ -138,14 +138,28 @@ def is_earnings_mention(r):
     return is_mention(r) and "earnings" in (r.get("title") or "").lower()
 
 
+# Mention markets are only rated for events with a set agenda: earnings calls, Fed
+# press conferences and speeches, company keynotes. Political speeches, rallies,
+# debates and TV interviews have too loose an agenda for past results (or anything
+# else) to give an edge. Unrated is the default for new series.
+RATED_KALSHI_SERIES = re.compile(r"^KX(EARNINGSMENTION|FEDMENTION)")
+STRUCTURED_EVENT = re.compile(r"earnings call|keynote|press conference|economic outlook|"
+                              r"monetary policy|fomc|investor day|conference call", re.I)
+POLITICAL = re.compile(r"trump|vance|rally|debate|campaign|senat|congress|governor|president|"
+                       r"prime minister|white house|house of commons|parliament|mayor", re.I)
+
+
 def is_unbettable(r):
-    """Mention markets on what Trump will say: too unpredictable for past results (or
-    anything else) to give an edge, so the model doesn't rate them. Still listed."""
+    """Mention markets the model doesn't rate (still listed under All mentions)."""
     if not is_mention(r):
         return False
-    if r["source"] == "kalshi":
-        return "TRUMP" in str(r["market_id"]).split("-")[0]
-    return "trump" in (r.get("title") or "").lower()
+    title = r.get("title") or ""
+    series = str(r["market_id"]).split("-")[0] if r["source"] == "kalshi" else ""
+    if RATED_KALSHI_SERIES.match(series):
+        return False
+    if POLITICAL.search(title) or "TRUMP" in series or "VANCE" in series:
+        return True
+    return not STRUCTURED_EVENT.search(title)
 
 
 KALSHI_TICKER_DATE = re.compile(r"^(\d{2})([A-Z]{3})(\d{2})$")
