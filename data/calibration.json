@@ -1,4 +1,10 @@
 {
- "generated": "2026-10-06T18:54:02+00:00",
- "basis": {}
+ "generated": "2026-10-07T00:25:43+00:00",
+ "basis": {
+  "history": {
+   "n": 22,
+   "delivered": 0.0,
+   "factor": 0.577
+  }
+ }
 }
