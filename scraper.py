@@ -280,6 +280,8 @@ def scrape_polymarket(snap, max_pages, end_max=None):
                 "url": f"https://polymarket.com/event/{slug}" if slug else "",
                 "real_money": 1,
                 "exclusive": 1 if m.get("negRisk") else 0,
+                # one Polymarket event can hold several mutually exclusive sets
+                "group_id": m.get("negRiskMarketID") or "",
             })
         # Short pages are normal (server caps page size); only a missing cursor ends it.
         cursor = page.get("next_cursor")

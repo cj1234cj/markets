@@ -38,6 +38,8 @@ LONGSHOT_MAX = 0.15     # YES price at or below this counts as a longshot
 LONGSHOT_BIAS = 0.20    # assume longshots are overpriced by 20% of their price
 MATCH_MIN_SIMILARITY = 0.7
 CROSS_MIN_HOURS = 24      # skip cross-venue checks on markets deciding sooner than this
+BRACKET_MAX_TOTAL = 1.25  # exclusive outcomes priced above this in total aren't really exclusive
+NEGATION = re.compile(r"\b(no|not|never|won't|isn't|doesn't|fail|fails|without)\b", re.I)
 MATCH_MAX_CLOSE_GAP_DAYS = 10
 HISTORY_MIN_EVENTS = 3  # past settled events needed before trusting a hit rate
 HISTORY_DECAY = 0.85    # weight of each older event vs the next newer one
@@ -226,6 +228,9 @@ def cross_venue(rows):
             ra, oa_ = outcome_tokens(r), outcome_tokens(o)
             if ra is not None and oa_ is not None and not (ra & oa_):
                 continue
+            # "Will there be NO Gemini release" is the opposite of "Will Google release"
+            if bool(NEGATION.search(r.get("title") or "")) != bool(NEGATION.search(o.get("title") or "")):
+                continue
             sim = len(r["_t"] & o["_t"]) / len(r["_t"] | o["_t"])
             if sim >= MATCH_MIN_SIMILARITY and sim > best.get(o["source"], (0, None))[0]:
                 best[o["source"]] = (sim, o)
@@ -273,7 +278,7 @@ def brackets(rows):
     groups = defaultdict(list)
     for r in rows:
         if r.get("exclusive") and r.get("event_id") and mid(r) is not None:
-            groups[(r["source"], r["event_id"])].append(r)
+            groups[(r["source"], r.get("group_id") or r["event_id"])].append(r)
     for legs in groups.values():
         if len(legs) < 2:
             continue
@@ -288,6 +293,8 @@ def brackets(rows):
         total = sum(mids)
         if total <= 1.0:
             continue        # can't tell which leg is cheap if the list may be incomplete
+        if total > BRACKET_MAX_TOTAL:
+            continue        # real overpricing is a few %; this much means the outcomes aren't exclusive
         for r, m in zip(legs, mids):
             fair = m / total
             offer(r, "NO", fair, "bracket",
