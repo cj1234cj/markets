@@ -132,6 +132,7 @@ td.t a{color:inherit}
       <button class="tab" role="tab" data-tab="earnings">Earnings calls</button>
       <button class="tab" role="tab" data-tab="mentions">All mentions</button>
       <button class="tab" role="tab" data-tab="top">Top edges</button>
+      <button class="tab" role="tab" data-tab="extreme">Long shots</button>
       <button class="tab" role="tab" data-tab="track">Track record</button>
     </nav>
     <p class="tabnote" id="tabnote"></p>
@@ -145,7 +146,6 @@ td.t a{color:inherit}
     <input type="search" id="q" placeholder="Search, e.g. Apple, Tesla, tariff, AI" aria-label="Search markets">
     <div class="row" id="sources"></div>
     <div class="row">
-      <button class="chip preset" id="history" aria-pressed="true" title="Fair value combined from several sources (market, Polymarket, past calls, peer companies, news), at least 20¢ from today's price">Multi-source edge ≥20¢</button>
       <button class="chip preset" id="realmoney" aria-pressed="true">Real money only</button>
       <button class="chip preset" id="solid" aria-pressed="false" title="Hide markets where the edge is only an estimate from thin trading">Solid signals only</button>
       <select id="sort" aria-label="Sort by">
@@ -172,8 +172,7 @@ const PLAY_MONEY = new Set(["manifold"]);
 const PAGE = 50;
 
 let rows = [], view = [], shown = 0;
-const state = { q:"", sources:new Set(Object.keys(NAMES)), realMoney:true, solid:false, history:true, sort:"edge" };
-const MIN_EDGE = 0.20;
+const state = { q:"", sources:new Set(Object.keys(NAMES)), realMoney:true, solid:false, sort:"edge" };
 const $ = id => document.getElementById(id);
 
 const pct = x => x == null ? "–" : (x*100 >= 1 || x === 0 ? Math.round(x*100) : (x*100).toFixed(1)) + "¢";
@@ -182,10 +181,11 @@ const date = s => { if(!s) return null; const d = new Date(s); return isNaN(d) ?
   d.toLocaleDateString(undefined,{month:"short",day:"numeric",year: d.getFullYear()!==new Date().getFullYear()?"numeric":undefined}); };
 
 const TABS = {
-  earnings: {note:"Earnings-call mention markets deciding in the next 30 days. Fair value = how often the word was said on past calls (your transcripts where saved, else Kalshi results).", history:true},
-  mentions: {note:"Every mention market (earnings calls, speeches, rallies, Fed, debates) deciding in the next 30 days.", history:true},
-  top:      {note:"The model's biggest edges across every real-money market deciding in the next 30 days, from any signal. Each call is logged in the Track record the first time it shows up.", history:false},
-  track:    {note:"Every call the model has made, logged when first flagged and scored when the market settles. Profit is per $1 contract at the price shown when the call was logged, after fees."},
+  earnings: {note:"Earnings-call mention markets deciding in the next 30 days where the multi-source fair value is at least 20¢ from what you'd pay. Smaller edges aren't shown."},
+  mentions: {note:"Mention markets with a set agenda (earnings calls, Fed, company keynotes) deciding in the next 30 days, edge 20¢ or more. Political speeches are excluded."},
+  top:      {note:"The model's biggest edges (20¢ or more) across every real-money market deciding in the next 30 days, from any signal."},
+  extreme:  {note:"Long shots: the market prices YES or NO at 2¢ or less, but the other sources (combined without the market's own price) put it at 10% or more and at least 10× the price. Small bets, big payouts; most will still lose."},
+  track:    {note:"Every call the model has made (5¢+ edge, including ones too small to show), logged when first flagged and scored when the market settles. Profit is per $1 contract at the price when logged, after fees."},
 };
 state.tab = TABS[location.hash.slice(1)] ? location.hash.slice(1) : "earnings";
 
@@ -196,9 +196,6 @@ function selectTab(tab){
   $("tabnote").textContent = TABS[tab].note;
   const track = tab === "track";
   $("trackview").hidden = !track; $("marketview").hidden = track;
-  $("history").hidden = !TABS[tab].history;
-  state.history = !!TABS[tab].history;
-  $("history").setAttribute("aria-pressed", state.history);
   rows = []; $("list").innerHTML = ""; $("summary").textContent = "Loading…"; $("counts").innerHTML = "";
   $("more").hidden = true;
   load();
@@ -254,9 +251,10 @@ function buildSourceChips(counts){
 function apply(){
   const terms = state.q.toLowerCase().split(/\s+/).filter(Boolean);
   view = rows.filter(r =>
+    // margin of safety: only real calls of 20c+ (the data is pre-filtered too)
+    (state.tab === "extreme" || (r.side && r.basis !== "thin" && r.edge >= 0.20)) &&
     state.sources.has(r.source) &&
     !(state.realMoney && PLAY_MONEY.has(r.source)) &&
-    (!state.history || ((r.basis === "ensemble" || r.basis === "history") && r.edge >= MIN_EDGE)) &&
     (!state.solid || (r.conf ?? 0) >= 0.5) &&
     terms.every(t => r.hay.includes(t)));
   const by = {
@@ -270,7 +268,9 @@ function apply(){
   view.sort(by);
   shown = 0; $("list").innerHTML = "";
   $("summary").textContent = `${view.length.toLocaleString()} markets`;
-  if(!view.length) $("list").innerHTML = `<li class="empty">No markets match. Try fewer words or switch more sources on.</li>`;
+  if(!view.length) $("list").innerHTML = rows.length
+    ? `<li class="empty">No markets match. Try fewer words or switch more sources on.</li>`
+    : `<li class="empty">Nothing clears the bar right now. That's the point: only edges with a big margin of safety are listed.</li>`;
   more();
 }
 
@@ -299,6 +299,7 @@ function item(r){
   const edgeHtml = r.edge == null ? "" : `<div class="edge">
       <span class="pill ${level}">${r.basis === "thin" ? "Edge up to " : "Edge +"}${pct(r.edge)}</span>
       <span class="side">${r.side ? `Buy ${r.side}${cost != null ? ` at ${pct(cost)}` : ""}` : "Research"}</span>
+      ${r.basis === "extreme" && cost ? `<span class="side">pays ${Math.round((1 - cost) / cost)}:1</span>` : ""}
       <span class="why">${BASIS[r.basis] || ""}, ${LEVEL[level].toLowerCase()}</span></div>`;
   const refHtml = r.ref ? `<div class="ref">${esc(r.ref)}${r.ref_url ? ` <a href="${esc(r.ref_url)}" target="_blank" rel="noopener">Compare</a>` : ""}</div>` : "";
   const title = r.url ? `<a href="${esc(r.url)}" target="_blank" rel="noopener">${esc(r.title)}</a>` : esc(r.title);
@@ -310,7 +311,7 @@ function item(r){
 }
 
 /* ---------- Track record ---------- */
-const BASIS_NAMES = {ensemble:"Multi-source", ensemble_mixed:"Multi-source (mixed event types)",
+const BASIS_NAMES = {extreme:"Long shot the sources back", ensemble:"Multi-source", ensemble_mixed:"Multi-source (mixed event types)",
   history:"Past results", history_mixed:"Past results (mixed event types)",
   cross_play:"Other venue disagrees (play money)", arb:"Arbitrage", cross:"Other venue disagrees",
   bracket:"Outcomes add to over 100%", longshot:"Longshot bias", thin:"Thin market"};
@@ -427,7 +428,6 @@ let t; $("q").oninput = e => { clearTimeout(t); t = setTimeout(() => { state.q =
 $("sort").onchange = e => { state.sort = e.target.value; apply(); };
 $("more").onclick = more;
 $("solid").onclick = e => { state.solid = !state.solid; e.currentTarget.setAttribute("aria-pressed", state.solid); apply(); };
-$("history").onclick = e => { state.history = !state.history; e.currentTarget.setAttribute("aria-pressed", state.history); apply(); };
 $("realmoney").onclick = e => { state.realMoney = !state.realMoney; e.currentTarget.setAttribute("aria-pressed", state.realMoney); apply(); };
 /* ---------- Refresh now: triggers the GitHub Action, waits, reloads ---------- */
 const REPO = (() => {

@@ -50,7 +50,7 @@ HISTORY_RECENT = 3      # the edge must also hold on just the last few events
 # is_unbettable in scraper.py.) Other rated mention series (Fed officials' speeches,
 # company keynotes) mix event types and Kalshi picks words to fit each event.
 SAME_FORMAT = re.compile(r"^KX(EARNINGSMENTION|FEDMENTION)")
-CONF = {"arb": 1.0, "ensemble": 0.8, "ensemble_mixed": 0.45, "history": 0.8, "history_mixed": 0.45, "cross": 0.75, "cross_play": 0.35, "bracket": 0.6, "longshot": 0.3, "thin": 0.2}
+CONF = {"arb": 1.0, "extreme": 0.3, "ensemble": 0.8, "ensemble_mixed": 0.45, "history": 0.8, "history_mixed": 0.45, "cross": 0.75, "cross_play": 0.35, "bracket": 0.6, "longshot": 0.3, "thin": 0.2}
 VENUE = {"kalshi": "Kalshi", "polymarket": "Polymarket", "predictit": "PredictIt", "manifold": "Manifold"}
 
 STOP = set("""the a an of in on at by to for will be is are and or vs before after during with what who which
@@ -332,6 +332,63 @@ def load_weights():
         return dict(PRIOR_WEIGHTS), 1.0
 
 
+TICKER_DAY = re.compile(r"^(\d{2})([A-Z]{3})(\d{2})$")
+
+
+def event_day_reached(r, now):
+    """Kalshi mention tickers carry the event date (-26OCT09-). On or after that day
+    the call may already have happened (8:30am calls vs a 9am run), so prices can
+    reflect the answer. Treat those markets as decided."""
+    from datetime import datetime
+    parts = str(r.get("market_id")).split("-")
+    m = TICKER_DAY.match(parts[1]) if r.get("source") == "kalshi" and len(parts) > 1 else None
+    if not m:
+        return False
+    try:
+        day = datetime.strptime("".join(m.groups()), "%y%b%d").date()
+    except ValueError:
+        return False
+    return day <= now.date()
+
+
+EXTREME_MAX_PRICE = 0.02   # the cheap side costs 2c or less...
+EXTREME_MIN_PROB = 0.10    # ...but the sources put it at 10%+
+EXTREME_MIN_RATIO = 10     # ...and at least 10x the price
+
+
+def extremes(rows):
+    """Long shots: the market prices YES (or NO) at <= 2c, but the other sources,
+    combined WITHOUT the market's own price, put it far higher. Kept apart from
+    the main tabs (basis 'extreme') and tracked separately in the ledger."""
+    from datetime import datetime, timezone
+    from sources import LABELS, pool
+    weights, temp = load_weights()
+    now = datetime.now(timezone.utc)
+    for r in rows:
+        est = {k: v for k, v in (r.get("est") or {}).items() if k != "market"}
+        if len(est) < 2 or event_day_reached(r, now):
+            continue
+        try:
+            if datetime.fromisoformat(str(r.get("decision_time")).replace("Z", "+00:00")) < now:
+                continue
+        except ValueError:
+            continue
+        p = pool(est, weights, temp)
+        if p is None:
+            continue
+        detail = r.get("est_detail") or {}
+        label = ("Sources without the market: " + " · ".join(
+            f"{LABELS.get(k, k)} {cents(v)}" + (f" ({detail[k]})" if k in detail else "") for k, v in est.items())
+                 + f" → {cents(p)} chance of YES")
+        series = str(r["market_id"]).split("-")[0]
+        url = f"https://kalshi.com/markets/{series.lower()}"
+        if has_ask(r) and r["yes_ask"] <= EXTREME_MAX_PRICE and p >= max(EXTREME_MIN_PROB, EXTREME_MIN_RATIO * r["yes_ask"]):
+            offer(r, "YES", p, "extreme", label, url)
+        no_cost_ = 1 - r["yes_bid"] if has_bid(r) else None
+        if no_cost_ is not None and no_cost_ <= EXTREME_MAX_PRICE and (1 - p) >= max(EXTREME_MIN_PROB, EXTREME_MIN_RATIO * no_cost_):
+            offer(r, "NO", p, "extreme", label, url)
+
+
 def ensemble(rows):
     """Fair value = weighted combination (in log-odds) of several independent sources
     (sources.py): the market itself, Polymarket, past calls, last 3 calls, peer
@@ -350,6 +407,8 @@ def ensemble(rows):
                 continue        # event over; the market already knows
         except ValueError:
             continue
+        if event_day_reached(r, now):
+            continue            # the call may already have happened today
         if (r.get("yes_bid") or 0) >= 0.95 or (has_ask(r) and r["yes_ask"] <= 0.03):
             continue            # priced as decided (e.g. word already said)
         fair = pool(est, weights, temp)
@@ -448,6 +507,7 @@ def compute_edges(rows):
     ladders(rows)
     brackets(rows)
     ensemble(rows)
+    extremes(rows)
     history([r for r in rows if not r.get("est")])   # only where no sources were gathered
     longshots_and_thin(rows)
     for r in rows:

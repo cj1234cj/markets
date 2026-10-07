@@ -430,7 +430,7 @@ def load_previous_prices(out_dir, today):
 
 
 TOP_N = 400            # markets in the "Top edges" tab
-TOP_MIN_EDGE = 0.05
+MIN_SHOWN_EDGE = 0.20  # margin of safety: smaller edges aren't shown anywhere
 
 
 def category(r):
@@ -449,14 +449,22 @@ def build_tabs(rows, now):
             return True
         return (t if t.tzinfo else t.replace(tzinfo=dt.timezone.utc)) >= now
 
-    top = [r for r in rows if r.get("real_money") and r.get("basis") not in (None, "", "thin")
-           and r.get("side") and (r.get("edge") or 0) >= TOP_MIN_EDGE and upcoming(r)]
+    # Only calls with a large margin of safety are shown: a real signal (not 'thin'),
+    # a side to take, and an edge of at least MIN_SHOWN_EDGE. Long shots have their own tab.
+    def shown(r):
+        return (r.get("basis") not in (None, "", "thin", "extreme") and r.get("side")
+                and (r.get("edge") or 0) >= MIN_SHOWN_EDGE and upcoming(r))
+
+    top = [r for r in rows if r.get("real_money") and shown(r)]
     top.sort(key=score, reverse=True)
+    extreme = [r for r in rows if r.get("basis") == "extreme" and r.get("real_money")]
+    extreme.sort(key=score, reverse=True)
     return {
-        "earnings": [r for r in rows if is_earnings_mention(r)],
+        "earnings": [r for r in rows if is_earnings_mention(r) and shown(r)],
         # political speeches, rallies, debates, TV interviews: eliminated entirely
-        "mentions": [r for r in rows if is_mention(r) and not r.get("no_signal")],
+        "mentions": [r for r in rows if is_mention(r) and not r.get("no_signal") and shown(r)],
         "top": top[:TOP_N],
+        "extreme": extreme,
     }
 
 
@@ -550,7 +558,9 @@ def main():
         if not args.no_ledger:
             entries = ledger.load()
             ledger.settle(entries, session)
-            ledger.record(entries, list(shown), snap, category)
+            # every call of 5c+ is logged (not just the 20c+ ones shown), so the sources
+            # get scored on a wider sample; the track record splits results by edge size
+            ledger.record(entries, all_rows, snap, category)
             ledger.save(entries)
             ledger.summarize(entries, os.path.join(args.site or "site", "data", "track.json"), snap)
 
