@@ -1,0 +1,21 @@
+name: Probe data sources
+
+# Manual check that the free data sources (SEC EDGAR, GDELT news) answer from
+# GitHub's runners. No scraping, nothing published.
+on: workflow_dispatch
+
+permissions:
+  contents: read
+
+jobs:
+  probe:
+    runs-on: ubuntu-latest
+    steps:
+      - name: SEC EDGAR
+        run: |
+          UA="markets-dashboard cj1234cj@users.noreply.github.com"
+          curl -s -o /dev/null -w "company_tickers %{http_code}\n" -A "$UA" https://www.sec.gov/files/company_tickers.json
+          curl -s -o /dev/null -w "submissions %{http_code}\n" -A "$UA" https://data.sec.gov/submissions/CIK0000027904.json
+      - name: GDELT
+        run: |
+          curl -s -w "\nhttp %{http_code}\n" "https://api.gdeltproject.org/api/v2/doc/doc?query=%22Delta%20Air%20Lines%22&mode=artlist&maxrecords=5&timespan=30d&format=json" | tail -c 400
