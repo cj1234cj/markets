@@ -352,8 +352,8 @@ def event_day_reached(r, now):
 
 
 EXTREME_MAX_PRICE = 0.02   # the cheap side costs 2c or less...
-EXTREME_MIN_PROB = 0.10    # ...but the sources put it at 10%+
-EXTREME_MIN_RATIO = 10     # ...and at least 10x the price
+EXTREME_MIN_PROB = 0.20    # ...but the sources put the real probability at 20%+
+EXTREME_MIN_RATIO = 10     # (always true at these prices: 20% vs <= 2c)
 
 
 def extremes(rows):

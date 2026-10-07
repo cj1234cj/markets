@@ -184,7 +184,7 @@ const TABS = {
   earnings: {note:"Earnings-call mention markets deciding in the next 30 days where the multi-source fair value is at least 20¢ from what you'd pay. Smaller edges aren't shown."},
   mentions: {note:"Mention markets with a set agenda (earnings calls, Fed, company keynotes) deciding in the next 30 days, edge 20¢ or more. Political speeches are excluded."},
   top:      {note:"The model's biggest edges (20¢ or more) across every real-money market deciding in the next 30 days, from any signal."},
-  extreme:  {note:"Long shots: the market prices YES or NO at 2¢ or less, but the other sources (combined without the market's own price) put it at 10% or more and at least 10× the price. Small bets, big payouts; most will still lose."},
+  extreme:  {note:"Long shots: the market prices YES or NO at 2¢ or less, but the other sources (combined without the market's own price) put the real probability at 20% or more. Small bets, big payouts; most will still lose."},
   track:    {note:"Every call the model has made (5¢+ edge, including ones too small to show), logged when first flagged and scored when the market settles. Profit is per $1 contract at the price when logged, after fees."},
 };
 state.tab = TABS[location.hash.slice(1)] ? location.hash.slice(1) : "earnings";
