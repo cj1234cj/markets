@@ -200,8 +200,11 @@ def stats(group):
     fm = [(a, b, y) for a, b, y in fm if a is not None and b is not None]
     brier_model = sum((a - y) ** 2 for a, _, y in fm) / len(fm) if fm else None
     brier_market = sum((b - y) ** 2 for _, b, y in fm) / len(fm) if fm else None
+    # ROI: profit / money put in (each call = one $1-payout contract at its entry price)
+    staked = sum(f(e["price"]) or 0 for e in group)
     return {"n": n, "pred_edge": round(pred, 4), "pnl": round(pnl, 4), "total": round(pnl * n, 2),
-            "win_rate": round(wins, 3),
+            "win_rate": round(wins, 3), "staked": round(staked, 2),
+            "roi": round(pnl * n / staked, 4) if staked > 0 else None,
             "brier_model": None if brier_model is None else round(brier_model, 4),
             "brier_market": None if brier_market is None else round(brier_market, 4)}
 

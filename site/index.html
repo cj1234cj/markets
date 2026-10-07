@@ -342,6 +342,8 @@ async function loadTrack(silent){
   }
 }
 
+const roi = x => x == null ? "–" : `<span class="${x > 0 ? "pos" : x < 0 ? "neg" : ""}">${x > 0 ? "+" : ""}${(x*100).toFixed(0)}%</span>`;
+
 function groupTable(title, group, names){
   const keys = Object.keys(group || {});
   if(!keys.length) return "";
@@ -353,10 +355,10 @@ function groupTable(title, group, names){
     const brier = s.brier_model == null ? "–" :
       `${s.brier_model.toFixed(3)} vs ${s.brier_market.toFixed(3)}`;
     return `<tr><td>${esc((names && names[k]) || k)}</td><td>${s.n}</td><td>${signed(s.pred_edge)}</td>
-      <td>${signed(s.pnl)}</td><td>${(s.win_rate*100).toFixed(0)}%</td><td>${brier}</td></tr>`;
+      <td>${signed(s.pnl)}</td><td>${(s.win_rate*100).toFixed(0)}%</td><td>${roi(s.roi)}</td><td>${brier}</td></tr>`;
   }).join("");
   return `<h2>${title}</h2><div class="tbl"><table><thead><tr><th></th><th>Settled</th><th>Predicted edge</th>
-    <th>Actual profit</th><th>Won</th><th title="Brier score: squared error of the probability vs what happened. The model's fair value against the market's own price when the call was logged.">Error, model vs market (lower wins)</th></tr></thead>
+    <th>Actual profit</th><th>Win rate</th><th title="Total profit ÷ total paid for the contracts">ROI</th><th title="Brier score: squared error of the probability vs what happened. The model's fair value against the market's own price when the call was logged.">Error, model vs market (lower wins)</th></tr></thead>
     <tbody>${rowsHtml}</tbody></table></div>`;
 }
 
@@ -408,7 +410,8 @@ function renderTrack(d){
     ["Avg predicted edge", t.n ? signed(t.pred_edge) : "–"],
     ["Avg actual profit", t.n ? signed(t.pnl) : "–"],
     ["Total profit, $1 each", t.n ? `<span class="${t.total>=0?"pos":"neg"}">${t.total>=0?"+":"−"}$${Math.abs(t.total).toFixed(2)}</span>` : "–"],
-    ["Won", t.n ? `${(t.win_rate*100).toFixed(0)}%` : "–"],
+    ["Win rate", t.n ? `${(t.win_rate*100).toFixed(0)}%` : "–"],
+    ["ROI", t.n ? roi(t.roi) : "–"],
   ].map(([k,v]) => `<div class="card"><div class="k">${k}</div><div class="v">${v}</div></div>`).join("");
   const F = d.fields;
   const calib = Object.entries(d.calibration || {}).map(([k,c]) =>
