@@ -233,7 +233,12 @@ async function load(silent){
     lastLoad = Date.now();
     return data.generated;
   }catch(e){
-    if(!silent) $("updated").textContent = "No snapshot yet. Tap Refresh now, or run the workflow once from the Actions tab on GitHub.";
+    if(!silent && tab === state.tab){
+      $("updated").textContent = "";
+      $("summary").textContent = "";
+      $("more").hidden = true;
+      $("list").innerHTML = `<li class="empty">No data for this tab yet. It fills in with the next scheduled data run (every 6 hours: 1am, 7am, 1pm, 7pm UTC).</li>`;
+    }
     return null;
   }
 }
