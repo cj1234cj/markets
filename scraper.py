@@ -138,7 +138,14 @@ def is_earnings_mention(r):
     return is_mention(r) and "earnings" in (r.get("title") or "").lower()
 
 
-TOPICS = {"earnings": is_earnings_mention, "mentions": is_mention}
+def is_unbettable(r):
+    """Mention markets on what Trump will say: too unpredictable for past results (or
+    anything else) to give an edge, so the model doesn't rate them. Still listed."""
+    if not is_mention(r):
+        return False
+    if r["source"] == "kalshi":
+        return "TRUMP" in str(r["market_id"]).split("-")[0]
+    return "trump" in (r.get("title") or "").lower()
 
 
 KALSHI_TICKER_DATE = re.compile(r"^(\d{2})([A-Z]{3})(\d{2})$")
@@ -506,7 +513,9 @@ def main():
 
     if all_rows:
         # past results per word, for the history-based fair value (mention markets only)
-        attach_history([r for r in all_rows if is_mention(r)], get_json)
+        for r in all_rows:
+            r["no_signal"] = is_unbettable(r)
+        attach_history([r for r in all_rows if is_mention(r) and not r["no_signal"]], get_json)
         compute_edges(all_rows)
         tabs = build_tabs(all_rows, now)
         # raw snapshot of every market shown on the dashboard (all open markets would
