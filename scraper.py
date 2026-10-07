@@ -36,7 +36,8 @@ import time
 
 import requests
 
-from edge import compute_edges
+from edge import compute_edges, mid, tight_mid
+from sources import attach_sources
 from mention_history import attach_history
 import ledger
 
@@ -530,7 +531,11 @@ def main():
         # past results per word, for the history-based fair value (mention markets only)
         for r in all_rows:
             r["no_signal"] = is_unbettable(r)
-        attach_history([r for r in all_rows if is_mention(r) and not r["no_signal"]], get_json)
+        rated = [r for r in all_rows if is_mention(r) and not r["no_signal"]]
+        attach_history(rated, get_json)
+        # several independent estimates per market for the multi-source fair value
+        attach_sources(rated, all_rows, get_json, session,
+                       lambda r: tight_mid(r) if tight_mid(r) is not None else mid(r), now)
         compute_edges(all_rows)
         tabs = build_tabs(all_rows, now)
         # raw snapshot of every market shown on the dashboard (all open markets would

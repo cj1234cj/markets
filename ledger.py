@@ -17,6 +17,7 @@ import csv
 import datetime as dt
 import json
 import logging
+import math
 import os
 import time
 from collections import defaultdict
@@ -34,7 +35,7 @@ MAX_SETTLE_PER_RUN = 600
 
 FIELDS = ["logged_utc", "source", "market_id", "event_id", "title", "outcome", "category",
           "basis", "signal", "side", "fair", "market_prob", "price", "edge", "conf",
-          "fair_raw", "edge_raw", "decision_time",
+          "fair_raw", "edge_raw", "sources", "word_type", "event_key", "decision_time",
           "url", "status", "result", "settled_utc", "pnl"]
 
 
@@ -82,6 +83,8 @@ def record(entries, rows, snap, category_of):
              "market_prob": r.get("market_prob"), "price": r.get("price"),
              "edge": r.get("edge"), "conf": r.get("conf"),
              "fair_raw": r.get("fair_raw", r.get("fair")), "edge_raw": r.get("edge_raw", r.get("edge")),
+             "sources": json.dumps({k: round(v, 4) for k, v in r["est"].items()}) if r.get("est") else "",
+             "word_type": r.get("word_type") or "", "event_key": r.get("event_key") or r.get("event_id") or "",
              "decision_time": r.get("decision_time") or r.get("close_time") or "",
              "url": r.get("url") or "", "status": "open", "result": "", "settled_utc": "", "pnl": ""}
         if key(e) in have:
@@ -211,6 +214,112 @@ def signal(e):
     return e["basis"]
 
 
+# ---------------------------------------------------------------- sources: scorecard + weights
+WEIGHTS = os.path.join(ROOT, "data", "weights.json")
+HALF_LIFE_DAYS = 120     # older settled calls count less
+WEIGHT_PRIOR_EVENTS = 30 # settled events before fitted weights outweigh the priors
+MIN_FIT_EVENTS = 10
+
+
+def scored_rows(settled, now):
+    """Settled calls that logged source estimates, each weighted so one event (one
+    earnings call) counts once in total, and older ones fade."""
+    rows = []
+    for e in settled:
+        try:
+            est = json.loads(e.get("sources") or "{}")
+        except ValueError:
+            continue
+        if not est or "market" not in est:
+            continue
+        rows.append((e, est, 1.0 if e["result"] == "yes" else 0.0))
+    per_event = defaultdict(int)
+    for e, _, _ in rows:
+        per_event[e.get("event_key") or e["market_id"]] += 1
+    out = []
+    for e, est, y in rows:
+        try:
+            age = (now - dt.datetime.fromisoformat(e["settled_utc"])).days
+        except ValueError:
+            age = 0
+        w = 0.5 ** (age / HALF_LIFE_DAYS) / per_event[e.get("event_key") or e["market_id"]]
+        out.append((e, est, y, w))
+    return out
+
+
+def _loss(p, y):
+    p = min(max(p, 0.01), 0.99)
+    return -(y * math.log(p) + (1 - y) * math.log(1 - p))
+
+
+def source_scorecard(rows):
+    """Per source: weighted Brier score vs the market's on the same calls, events
+    scored, and which word types it does best on."""
+    card = {}
+    names = sorted({k for _, est, _, _ in rows for k in est})
+    for k in names:
+        sub = [(est[k], est["market"], y, w, e) for e, est, y, w in rows if k in est]
+        W = sum(w for *_, w, _ in sub)
+        if not sub or W == 0:
+            continue
+        brier = sum(w * (p - y) ** 2 for p, _, y, w, _ in sub) / W
+        brier_mkt = sum(w * (m - y) ** 2 for _, m, y, w, _ in sub) / W
+        by_type = defaultdict(lambda: [0.0, 0.0, 0.0])
+        for p, m, y, w, e in sub:
+            t = by_type[e.get("word_type") or "?"]
+            t[0] += w * (p - y) ** 2; t[1] += w * (m - y) ** 2; t[2] += w
+        card[k] = {"events": len({e.get("event_key") or e["market_id"] for *_, e in sub}), "calls": len(sub),
+                   "brier": round(brier, 4), "brier_market": round(brier_mkt, 4),
+                   "by_type": {t: {"brier": round(a / c, 4), "brier_market": round(b / c, 4)}
+                               for t, (a, b, c) in by_type.items() if c}}
+    return card
+
+
+def fit_weights(rows, prior):
+    """Weights (>= 0) and a temperature for the log-odds pool that minimise weighted log
+    loss on settled calls, with a pull toward the priors; then blended with the priors
+    by how many events have settled. Plain projected gradient descent."""
+    from sources import pool
+    names = list(prior)
+    n_events = len({e.get("event_key") or e["market_id"] for e, *_ in rows})
+    if n_events < MIN_FIT_EVENTS:
+        return dict(prior), 1.0, n_events, False
+
+    def objective(vec):
+        w = dict(zip(names, vec[:-1]))
+        total = sum(wt * _loss(pool(est, w, vec[-1]) or est["market"], y) for _, est, y, wt in rows)
+        reg = sum((vec[i] - prior[n]) ** 2 for i, n in enumerate(names)) + (vec[-1] - 1) ** 2
+        return total / sum(wt for *_, wt in rows) + 0.02 * reg
+
+    vec = [prior[n] for n in names] + [1.0]
+    step, h = 0.3, 1e-4
+    for _ in range(400):
+        base = objective(vec)
+        grad = []
+        for i in range(len(vec)):
+            v = vec[:]; v[i] += h
+            grad.append((objective(v) - base) / h)
+        vec = [max(0.0, x - step * g) for x, g in zip(vec, grad)]
+        vec[-1] = min(max(vec[-1], 0.5), 2.0)
+    blend = n_events / (n_events + WEIGHT_PRIOR_EVENTS)
+    weights = {n: round(prior[n] + blend * (vec[i] - prior[n]), 4) for i, n in enumerate(names)}
+    temp = round(1 + blend * (vec[-1] - 1), 4)
+    return weights, temp, n_events, True
+
+
+def update_weights(settled, snap):
+    from sources import PRIOR_WEIGHTS
+    now = dt.datetime.now(dt.timezone.utc)
+    rows = scored_rows(settled, now)
+    weights, temp, n_events, fitted = fit_weights(rows, PRIOR_WEIGHTS)
+    card = source_scorecard(rows)
+    with open(WEIGHTS, "w", encoding="utf-8") as fh:
+        json.dump({"generated": snap, "fitted": fitted, "events": n_events, "temperature": temp,
+                   "weights": weights, "prior": PRIOR_WEIGHTS}, fh, indent=1)
+    return {"weights": weights, "prior": PRIOR_WEIGHTS, "temperature": temp, "events": n_events,
+            "fitted": fitted, "min_events": MIN_FIT_EVENTS, "scorecard": card}
+
+
 def summarize(entries, out_path, snap):
     settled = [e for e in entries if e["status"] == "settled"]
     groups = {}
@@ -248,6 +357,7 @@ def summarize(entries, out_path, snap):
         "open": sum(1 for e in entries if e["status"] == "open"),
         "void": sum(1 for e in entries if e["status"] == "void"),
         "groups": groups, "calibration": calib, "fields": fields,
+        "sources": update_weights(settled, snap),
         "settled": [[e.get(k) for k in fields] for e in recent],
         "pending": [[e.get(k) for k in fields] for e in pending],
     }

@@ -50,7 +50,7 @@ HISTORY_RECENT = 3      # the edge must also hold on just the last few events
 # is_unbettable in scraper.py.) Other rated mention series (Fed officials' speeches,
 # company keynotes) mix event types and Kalshi picks words to fit each event.
 SAME_FORMAT = re.compile(r"^KX(EARNINGSMENTION|FEDMENTION)")
-CONF = {"arb": 1.0, "history": 0.8, "history_mixed": 0.45, "cross": 0.75, "cross_play": 0.35, "bracket": 0.6, "longshot": 0.3, "thin": 0.2}
+CONF = {"arb": 1.0, "ensemble": 0.8, "ensemble_mixed": 0.45, "history": 0.8, "history_mixed": 0.45, "cross": 0.75, "cross_play": 0.35, "bracket": 0.6, "longshot": 0.3, "thin": 0.2}
 VENUE = {"kalshi": "Kalshi", "polymarket": "Polymarket", "predictit": "PredictIt", "manifold": "Manifold"}
 
 STOP = set("""the a an of in on at by to for will be is are and or vs before after during with what who which
@@ -145,7 +145,8 @@ def offer(r, side, fair, basis, ref="", ref_url="", conf=None):
     # history_mixed learn separately): a signal that has delivered only part of the edge
     # it predicted gets its fair value pulled toward the market price by that much, so
     # the edge shown is the edge its record supports.
-    factor = CALIBRATION.get(basis, CALIBRATION.get(short, 1.0))
+    # (the multi-source signal learns per-source weights instead; see ensemble())
+    factor = 1.0 if short == "ensemble" else CALIBRATION.get(basis, CALIBRATION.get(short, 1.0))
     raw_fair = fair
     market = tight_mid(r) if tight_mid(r) is not None else mid(r)
     if factor != 1.0 and market is not None:
@@ -319,6 +320,58 @@ def brackets(rows):
 
 
 # ---------- 3b. mention markets priced from past results (mention_history.py)
+def load_weights():
+    """Per-source weights learned from settled calls (ledger.py), else the priors."""
+    from sources import PRIOR_WEIGHTS
+    path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "data", "weights.json")
+    try:
+        with open(path, encoding="utf-8") as fh:
+            w = json.load(fh)
+        return w["weights"], w.get("temperature", 1.0)
+    except (OSError, ValueError, KeyError):
+        return dict(PRIOR_WEIGHTS), 1.0
+
+
+def ensemble(rows):
+    """Fair value = weighted combination (in log-odds) of several independent sources
+    (sources.py): the market itself, Polymarket, past calls, last 3 calls, peer
+    companies this season, news. Weights start as priors and are re-fitted from
+    settled calls. Needs at least two sources besides the market."""
+    from datetime import datetime, timezone
+    from sources import LABELS, pool
+    weights, temp = load_weights()
+    now = datetime.now(timezone.utc)
+    for r in rows:
+        est = r.get("est") or {}
+        if "market" not in est or sum(1 for k in est if k != "market") < 2:
+            continue
+        try:
+            if datetime.fromisoformat(str(r.get("decision_time")).replace("Z", "+00:00")) < now:
+                continue        # event over; the market already knows
+        except ValueError:
+            continue
+        if (r.get("yes_bid") or 0) >= 0.95 or (has_ask(r) and r["yes_ask"] <= 0.03):
+            continue            # priced as decided (e.g. word already said)
+        fair = pool(est, weights, temp)
+        if fair is None:
+            continue
+        detail = r.get("est_detail") or {}
+        present = sum(weights.get(k, 0) for k in est) or 1    # share among the sources used here
+        parts = [f"{LABELS.get(k, k)} {cents(p)}" + (f" ({detail[k]})" if k in detail else "")
+                 + f" [{weights.get(k, 0) / present:.0%}]" for k, p in est.items()]
+        hist = r.get("hist") or []
+        months = "Jan Feb Mar Apr May Jun Jul Aug Sep Oct Nov Dec".split()
+        past = ", ".join(f"{months[int(d[5:7]) - 1]} {int(d[8:10])}{'' if d[:4] == str(now.year) else ' ' + chr(39) + d[2:4]} "
+                         f"{'✓' if res == 'yes' else '✗'}" for d, res, _ in hist[:8] if len(d) == 10)
+        label = ("Sources [weight]: " + " · ".join(parts) + f" → fair {cents(fair)}."
+                 + (f" Past calls: {past}." if past else ""))
+        series = str(r["market_id"]).split("-")[0]
+        basis = "ensemble" if SAME_FORMAT.match(series) else "ensemble_mixed"
+        url = f"https://kalshi.com/markets/{series.lower()}"
+        offer(r, "YES", fair, basis, label, url)
+        offer(r, "NO", fair, basis, label, url)
+
+
 def history(rows):
     """Fair = how often this word came up at past events in the same series.
     Recent events count more (speakers change habits, e.g. a new Fed chair), and
@@ -394,7 +447,8 @@ def compute_edges(rows):
     cross_venue(rows)
     ladders(rows)
     brackets(rows)
-    history(rows)
+    ensemble(rows)
+    history([r for r in rows if not r.get("est")])   # only where no sources were gathered
     longshots_and_thin(rows)
     for r in rows:
         r.pop("_score", None)

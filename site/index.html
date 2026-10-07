@@ -145,7 +145,7 @@ td.t a{color:inherit}
     <input type="search" id="q" placeholder="Search, e.g. Apple, Tesla, tariff, AI" aria-label="Search markets">
     <div class="row" id="sources"></div>
     <div class="row">
-      <button class="chip preset" id="history" aria-pressed="true" title="Fair value from how often the word was said at past events in the same series, at least 20¢ from today's price">History-backed ≥20¢</button>
+      <button class="chip preset" id="history" aria-pressed="true" title="Fair value combined from several sources (market, Polymarket, past calls, peer companies, news), at least 20¢ from today's price">Multi-source edge ≥20¢</button>
       <button class="chip preset" id="realmoney" aria-pressed="true">Real money only</button>
       <button class="chip preset" id="solid" aria-pressed="false" title="Hide markets where the edge is only an estimate from thin trading">Solid signals only</button>
       <select id="sort" aria-label="Sort by">
@@ -256,7 +256,7 @@ function apply(){
   view = rows.filter(r =>
     state.sources.has(r.source) &&
     !(state.realMoney && PLAY_MONEY.has(r.source)) &&
-    (!state.history || (r.basis === "history" && r.edge >= MIN_EDGE)) &&
+    (!state.history || ((r.basis === "ensemble" || r.basis === "history") && r.edge >= MIN_EDGE)) &&
     (!state.solid || (r.conf ?? 0) >= 0.5) &&
     terms.every(t => r.hay.includes(t)));
   const by = {
@@ -310,7 +310,8 @@ function item(r){
 }
 
 /* ---------- Track record ---------- */
-const BASIS_NAMES = {history:"Past results", history_mixed:"Past results (mixed event types)",
+const BASIS_NAMES = {ensemble:"Multi-source", ensemble_mixed:"Multi-source (mixed event types)",
+  history:"Past results", history_mixed:"Past results (mixed event types)",
   cross_play:"Other venue disagrees (play money)", arb:"Arbitrage", cross:"Other venue disagrees",
   bracket:"Outcomes add to over 100%", longshot:"Longshot bias", thin:"Thin market"};
 const CATEGORY_NAMES = {earnings:"Earnings calls", mentions:"Other mentions", other:"Other markets"};
@@ -366,6 +367,31 @@ function callsTable(title, d, list, settled){
     ${settled ? "<th>Result</th><th>Profit</th>" : "<th>Decides</th>"}</tr></thead><tbody>${rowsHtml}</tbody></table></div>`;
 }
 
+const SOURCE_NAMES = {market:"Kalshi market price", polymarket:"Polymarket price", kalshi_history:"Past calls (recency-weighted)",
+  kalshi_recent3:"Last 3 calls", peers_season:"Peer companies this season", news:"News headlines (30 days)", filings:"SEC filings"};
+
+function sourcesTable(s){
+  if(!s || !s.weights) return "";
+  const card = s.scorecard || {};
+  const total = Object.values(s.weights).reduce((a,b) => a+b, 0) || 1;
+  const ptotal = Object.values(s.prior || {}).reduce((a,b) => a+b, 0) || 1;
+  const rows = Object.keys(s.weights).sort((a,b) => s.weights[b] - s.weights[a]).map(k => {
+    const c = card[k];
+    const best = c ? Object.entries(c.by_type || {}).filter(([,v]) => v.brier < v.brier_market)
+      .map(([t]) => t).join(", ") || "–" : "–";
+    const vs = c ? `<span class="${c.brier <= c.brier_market ? "pos" : "neg"}">${c.brier.toFixed(3)}</span> vs ${c.brier_market.toFixed(3)}` : "not scored yet";
+    return `<tr><td>${esc(SOURCE_NAMES[k] || k)}</td><td>${c ? c.events : 0}</td><td>${vs}</td>
+      <td>${(100 * (s.prior?.[k] ?? 0) / ptotal).toFixed(0)}% → <b>${(100 * s.weights[k] / total).toFixed(0)}%</b></td><td class="t">${esc(best)}</td></tr>`;
+  }).join("");
+  const status = s.fitted
+    ? `Weights re-fitted from ${s.events} settled earnings calls (blended with the starting weights until about 30).`
+    : `Starting weights for now: they're re-fitted once ${s.min_events} earnings calls have settled (${s.events} so far). Each call counts once, however many words it had, and older calls fade.`;
+  return `<h2>Sources: which are accurate</h2><p class="summary">Each multi-source fair value combines these estimates. ${status}
+    Error is the Brier score on the same calls (lower wins); a source earns weight by beating the market's own price.</p>
+    <div class="tbl"><table><thead><tr><th>Source</th><th>Calls scored</th><th>Error vs market</th><th>Weight (start → now)</th><th>Beats the market on</th></tr></thead>
+    <tbody>${rows}</tbody></table></div>`;
+}
+
 function renderTrack(d){
   const t = d.totals || {n:0};
   const cards = [
@@ -387,6 +413,7 @@ function renderTrack(d){
     ${groupTable("By venue", d.groups?.source, NAMES)}
     ${calib ? `<h2>How the model adjusts</h2><p class="summary">Each signal type's confidence is scaled by how much of its predicted edge it has actually delivered, blended with no change until it has about 30 settled calls.</p>
       <div class="tbl"><table><thead><tr><th>Signal</th><th>Settled</th><th>Edge delivered</th><th>Confidence scaled</th></tr></thead><tbody>${calib}</tbody></table></div>` : ""}
+    ${sourcesTable(d.sources)}
     ${callsTable("Recently settled", d, d.settled || [], true)}
     ${callsTable("Open calls, deciding soonest", d, d.pending || [], false)}`;
 }

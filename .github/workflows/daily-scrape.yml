@@ -26,6 +26,13 @@ jobs:
         with:
           python-version: "3.12"
       - run: pip install -r requirements.txt
+      # news headlines are fetched once per company per day; keep them between runs
+      # without committing them (the cache key changes every run, the newest is restored)
+      - uses: actions/cache@v4
+        with:
+          path: data/news_cache.json
+          key: news-${{ github.run_id }}
+          restore-keys: news-
       - run: python scraper.py --out data --site site
 
       - name: Commit raw snapshot
