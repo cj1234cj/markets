@@ -33,7 +33,8 @@ CALIB_PRIOR = 30      # resolved calls needed before track record outweighs the 
 MAX_SETTLE_PER_RUN = 600
 
 FIELDS = ["logged_utc", "source", "market_id", "event_id", "title", "outcome", "category",
-          "basis", "signal", "side", "fair", "market_prob", "price", "edge", "conf", "decision_time",
+          "basis", "signal", "side", "fair", "market_prob", "price", "edge", "conf",
+          "fair_raw", "edge_raw", "decision_time",
           "url", "status", "result", "settled_utc", "pnl"]
 
 
@@ -80,6 +81,7 @@ def record(entries, rows, snap, category_of):
              "side": r["side"], "fair": r.get("fair"),
              "market_prob": r.get("market_prob"), "price": r.get("price"),
              "edge": r.get("edge"), "conf": r.get("conf"),
+             "fair_raw": r.get("fair_raw", r.get("fair")), "edge_raw": r.get("edge_raw", r.get("edge")),
              "decision_time": r.get("decision_time") or r.get("close_time") or "",
              "url": r.get("url") or "", "status": "open", "result": "", "settled_utc": "", "pnl": ""}
         if key(e) in have:
@@ -222,9 +224,15 @@ def summarize(entries, out_path, snap):
 
     # calibration for edge.py: how much of the predicted edge each signal type actually
     # delivered, shrunk toward 1.0 (no change) until it has CALIB_PRIOR resolved calls
+    # measured against the model's RAW edge (before any track-record adjustment), so
+    # the factor doesn't compound run after run
+    raw_pred = defaultdict(list)
+    for e in settled:
+        raw_pred[signal(e)].append(f(e.get("edge_raw")) or f(e["edge"]) or 0)
     calib = {}
     for basis, s in groups["basis"].items():
-        ratio = max(0.0, min(1.5, s["pnl"] / s["pred_edge"])) if s["pred_edge"] > 0 else 1.0
+        pred = sum(raw_pred[basis]) / len(raw_pred[basis])
+        ratio = max(0.0, min(1.5, s["pnl"] / pred)) if pred > 0 else 1.0
         w = s["n"] / (s["n"] + CALIB_PRIOR)
         calib[basis] = {"n": s["n"], "delivered": round(ratio, 3), "factor": round(w * ratio + (1 - w), 3)}
     with open(CALIBRATION, "w", encoding="utf-8") as fh:

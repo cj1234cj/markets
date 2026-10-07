@@ -140,17 +140,30 @@ CALIBRATION = {}
 def offer(r, side, fair, basis, ref="", ref_url="", conf=None):
     if r.get("no_signal"):      # political mention markets: agenda too loose to bet
         return
+    short = basis.split("_")[0]
+    # Track record (ledger.py -> data/calibration.json, per full signal so history and
+    # history_mixed learn separately): a signal that has delivered only part of the edge
+    # it predicted gets its fair value pulled toward the market price by that much, so
+    # the edge shown is the edge its record supports.
+    factor = CALIBRATION.get(basis, CALIBRATION.get(short, 1.0))
+    raw_fair = fair
+    market = tight_mid(r) if tight_mid(r) is not None else mid(r)
+    if factor != 1.0 and market is not None:
+        fair = market + factor * (raw_fair - market)
+        ref = (ref + (". " if ref and not ref.endswith(".") else " ") +
+               f"Adjusted for this signal's track record: fair moved {abs(1 - factor):.0%} "
+               f"{'toward' if factor < 1 else 'away from'} the market price, {cents(raw_fair)} → {cents(fair)}.")
     e = edge_for(r, side, fair)
     if e is None or e <= 0:
         return
-    short = basis.split("_")[0]
-    # calibrated per full signal (history vs history_mixed learn separately)
-    c = (CONF[basis] if conf is None else conf) * CALIBRATION.get(basis, CALIBRATION.get(short, 1.0))
+    c = CONF[basis] if conf is None else conf
     if e * c > r.get("_score", -1):
         r.update(edge=round(e, 4), side=side, basis=short, signal=basis, conf=round(c, 3),
                  ref=ref, ref_url=ref_url, _score=e * c,
-                 # for the track record (ledger.py)
-                 fair=round(fair, 4), price=yes_cost(r) if side == "YES" else no_cost(r),
+                 # for the track record (ledger.py): raw model values are what get calibrated
+                 fair=round(fair, 4), fair_raw=round(raw_fair, 4),
+                 edge_raw=round(edge_for(r, side, raw_fair) or 0, 4),
+                 price=yes_cost(r) if side == "YES" else no_cost(r),
                  market_prob=mid(r))
 
 
