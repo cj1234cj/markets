@@ -150,7 +150,7 @@ POLITICAL = re.compile(r"trump|vance|rally|debate|campaign|senat|congress|govern
 
 
 def is_unbettable(r):
-    """Mention markets the model doesn't rate (still listed under All mentions)."""
+    """Political / loose-agenda mention markets: never rated, shown or logged."""
     if not is_mention(r):
         return False
     title = r.get("title") or ""
@@ -453,7 +453,8 @@ def build_tabs(rows, now):
     top.sort(key=score, reverse=True)
     return {
         "earnings": [r for r in rows if is_earnings_mention(r)],
-        "mentions": [r for r in rows if is_mention(r)],
+        # political speeches, rallies, debates, TV interviews: eliminated entirely
+        "mentions": [r for r in rows if is_mention(r) and not r.get("no_signal")],
         "top": top[:TOP_N],
     }
 
