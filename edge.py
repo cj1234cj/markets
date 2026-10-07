@@ -51,7 +51,8 @@ HISTORY_RECENT = 3      # the edge must also hold on just the last few events
 # company keynotes) mix event types and Kalshi picks words to fit each event.
 SAME_FORMAT = re.compile(r"^KX(EARNINGSMENTION|FEDMENTION)")
 CONF = {"arb": 1.0, "arb_cross": 1.0, "extreme": 0.3, "ensemble": 0.8, "ensemble_mixed": 0.45, "history": 0.8, "history_mixed": 0.45, "cross": 0.75, "cross_play": 0.35, "bracket": 0.6, "longshot": 0.3, "thin": 0.2}
-VENUE = {"kalshi": "Kalshi", "polymarket": "Polymarket", "predictit": "PredictIt", "manifold": "Manifold"}
+VENUE = {"kalshi": "Kalshi", "polymarket": "Polymarket", "predictit": "PredictIt", "manifold": "Manifold",
+         "limitless": "Limitless", "opinion": "Opinion", "myriad": "Myriad"}
 
 STOP = set("""the a an of in on at by to for will be is are and or vs before after during with what who which
 how many much than more less does do did market price yes no this that it its as from his her their
@@ -68,6 +69,13 @@ def fee(source, price):
         return 0.07 * price * (1 - price)          # Kalshi standard taker fee
     if source == "predictit":
         return 0.10 * price * (1 - price)          # 10% of profit, expected at fair ~ price
+    # smaller venues: top of each published range, so arbitrage has to survive the worst case
+    if source == "limitless":
+        return price * (0.03 - 0.026 * price)      # 3% of cost on cheap shares -> 0.4% near $1
+    if source == "opinion":
+        return price * 0.04 * min(price, 1 - price)  # up to 2% at 50c, less toward 0/1 (+ $0.50 min/order)
+    if source == "myriad":
+        return price * 0.02 + 0.0085               # up to 2% on buys + gas per trade
     return 0.0                                      # most Polymarket markets; Manifold is play money
 
 

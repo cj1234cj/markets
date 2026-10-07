@@ -119,6 +119,8 @@ def news_headlines(session, company, cache, today):
     c = cache.get(company)
     if c and c.get("day") == today:
         return c["titles"]
+    if os.environ.get("SKIP_NEWS"):          # local test runs (GDELT blocks some networks)
+        return c["titles"] if c else None
     try:
         r = session.get(GDELT, params={"query": f'"{company}"', "mode": "artlist", "maxrecords": 250,
                                        "timespan": f"{NEWS_DAYS}d", "format": "json", "sourcelang": "english"},

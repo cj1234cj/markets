@@ -73,7 +73,7 @@ def record(entries, rows, snap, category_of):
     for r in rows:
         if r.get("basis") in (None, "", "thin") or not r.get("side") or (r.get("edge") or 0) < MIN_LOG_EDGE:
             continue
-        if r["source"] == "predictit":       # no public results API to settle against
+        if r["source"] not in ("kalshi", "polymarket", "manifold"):   # no results API wired up yet
             continue
         if r.get("signal") == "arb_cross":   # two-leg trade; one leg's P&L would mislead
             continue

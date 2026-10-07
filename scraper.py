@@ -373,11 +373,119 @@ def scrape_predictit(snap, _max_pages):
     return rows
 
 
+# ---- smaller real-money venues (crypto order books / AMMs), mainly for arbitrage
+def ms_iso(ms):
+    return ms_to_iso(ms) if ms else None
+
+
+def scrape_limitless(snap, max_pages):
+    """Limitless (Base). tradePrices.buy.market = [cost of YES, cost of NO] right now."""
+    rows, page = [], 1
+    while page <= max_pages:
+        data = get_json("https://api.limitless.exchange/markets/active", {"limit": 25, "page": page})
+        items = data.get("data") or []
+        for m in items:
+            for child in (m.get("markets") or [m]):
+                buy = ((child.get("tradePrices") or {}).get("buy") or {}).get("market") or []
+                if len(buy) != 2:
+                    continue
+                yes_ask, no_ask = num(buy[0]), num(buy[1])
+                title = m.get("title") if child is m else f"{m.get('title')}: {child.get('title')}"
+                prices = child.get("prices") or [None]
+                rows.append({
+                    "snapshot_utc": snap, "source": "limitless",
+                    "market_id": str(child.get("id")), "event_id": str(m.get("id")),
+                    "title": title, "outcome": "Yes",
+                    "yes_price": num(prices[0]), "yes_ask": yes_ask,
+                    "yes_bid": 1 - no_ask if no_ask is not None else None,
+                    "volume": num(child.get("volumeFormatted")), "volume_24h": None,
+                    "open_interest": None, "liquidity": None,
+                    "close_time": ms_iso(child.get("expirationTimestamp") or m.get("expirationTimestamp")),
+                    "url": f"https://limitless.exchange/markets/{m.get('slug')}",
+                    "real_money": 1, "exclusive": 1 if m.get("markets") else 0,
+                })
+        if len(items) < 25 or page * 25 >= (data.get("totalMarketsCount") or 0):
+            break
+        page += 1
+        time.sleep(0.2)
+    return rows
+
+
+def scrape_opinion(snap, max_pages):
+    """Opinion (BNB Chain). Prices come from each YES token's order book."""
+    base = "https://openapi.opinion.trade/openapi"
+    markets, page = [], 1
+    while page <= max_pages:
+        res = get_json(f"{base}/market", {"page": page, "limit": 20, "status": "activated"}).get("result") or {}
+        items = res.get("list") or []
+        for m in items:
+            for child in (m.get("childMarkets") or [m]):
+                if child.get("yesTokenId"):
+                    markets.append((m, child))
+        if len(items) < 20:
+            break
+        page += 1
+        time.sleep(0.2)
+    rows = []
+    for m, c in markets:
+        try:
+            book = get_json(f"{base}/token/orderbook", {"token_id": c["yesTokenId"], "depth": 1}).get("result") or {}
+        except Exception:
+            continue
+        bids = [num(b.get("price")) for b in book.get("bids") or []]
+        asks = [num(a.get("price")) for a in book.get("asks") or []]
+        title = m.get("marketTitle") if c is m else f"{m.get('marketTitle')}: {c.get('marketTitle')}"
+        rows.append({
+            "snapshot_utc": snap, "source": "opinion",
+            "market_id": str(c.get("marketId")), "event_id": str(m.get("marketId")),
+            "title": title, "outcome": c.get("yesLabel") or "Yes",
+            "yes_price": None, "yes_bid": max(bids) if bids else None, "yes_ask": min(asks) if asks else None,
+            "volume": num(c.get("volume")), "volume_24h": None, "open_interest": None, "liquidity": None,
+            "close_time": ms_iso((c.get("cutoffAt") or m.get("cutoffAt") or 0) * 1000),
+            "url": f"https://app.opinion.trade/detail?topicId={m.get('marketId')}",
+            "real_money": 1, "exclusive": 1 if m.get("childMarkets") else 0,
+        })
+        time.sleep(0.1)
+    return rows
+
+
+def scrape_myriad(snap, max_pages):
+    """Myriad (Abstract / BNB Chain). AMM: one price per outcome, used as both bid and ask."""
+    rows, page = [], 1
+    while page <= max_pages:
+        data = get_json("https://api-v2.myriadprotocol.com/markets", {"state": "open", "limit": 100, "page": page})
+        for m in data.get("data") or []:
+            if (m.get("expiresAt") or "").startswith("2100"):      # perpetual games, not events
+                continue
+            outs = m.get("outcomes") or []
+            yes_no = len(outs) == 2 and (outs[0].get("title") or "").lower() == "yes"
+            for o in (outs[:1] if yes_no else outs):
+                p = num(o.get("price"))
+                rows.append({
+                    "snapshot_utc": snap, "source": "myriad",
+                    "market_id": f"{m.get('id')}-{o.get('id')}", "event_id": str(m.get("id")),
+                    "title": m.get("title"), "outcome": "Yes" if yes_no else o.get("title"),
+                    "yes_price": p, "yes_bid": p, "yes_ask": p,
+                    "volume": num(m.get("volume")), "volume_24h": None, "open_interest": None,
+                    "liquidity": num(m.get("liquidity")), "close_time": m.get("expiresAt"),
+                    "url": f"https://myriad.markets/markets/{m.get('slug')}",
+                    "real_money": 1, "exclusive": 0 if yes_no else 1,
+                })
+        if not (data.get("pagination") or {}).get("hasNext"):
+            break
+        page += 1
+        time.sleep(0.2)
+    return rows
+
+
 SOURCES = {
     "kalshi": scrape_kalshi,
     "polymarket": scrape_polymarket,
     "manifold": scrape_manifold,
     "predictit": scrape_predictit,
+    "limitless": scrape_limitless,
+    "opinion": scrape_opinion,
+    "myriad": scrape_myriad,
 }
 
 
