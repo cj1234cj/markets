@@ -60,6 +60,7 @@ li.m{display:grid;grid-template-columns:1fr auto;gap:4px 16px;padding:14px 0;bor
 .price{grid-row:1/3;grid-column:2;text-align:right;align-self:start}
 .price b{display:block;font-size:24px;font-weight:700;letter-spacing:-.01em;line-height:1.1}
 .chg{font-size:13px;font-weight:600}
+.price .lbl{display:block;font-size:11.5px;color:var(--muted);text-transform:uppercase;letter-spacing:.04em}
 .chg.up{color:var(--up)} .chg.down{color:var(--down)} .chg.flat{color:var(--muted)}
 .bar{grid-column:1/3;position:relative;height:8px;border-radius:4px;background:var(--track);overflow:hidden;margin-top:4px}
 .bar .sp{position:absolute;top:0;bottom:0;background:var(--spread)}
@@ -292,15 +293,17 @@ function item(r){
   const BASIS = BASIS_NAMES;
   const level = r.conf >= 0.9 ? "high" : r.conf >= 0.5 ? "medium" : "low";
   const LEVEL = {high:"High confidence", medium:"Medium confidence", low:"Low confidence"};
+  // what the suggested side costs right now: YES at the ask, NO at 1 - the YES bid
+  const cost = r.side === "YES" ? ask : r.side === "NO" && bid != null ? 1 - bid : null;
   const edgeHtml = r.edge == null ? "" : `<div class="edge">
-      <span class="pill ${level}">${r.basis === "thin" ? "Up to " : "+"}${pct(r.edge)}</span>
-      <span class="side">${r.side ? "Buy " + r.side : "Research"}</span>
+      <span class="pill ${level}">${r.basis === "thin" ? "Edge up to " : "Edge +"}${pct(r.edge)}</span>
+      <span class="side">${r.side ? `Buy ${r.side}${cost != null ? ` at ${pct(cost)}` : ""}` : "Research"}</span>
       <span class="why">${BASIS[r.basis] || ""}, ${LEVEL[level].toLowerCase()}</span></div>`;
   const refHtml = r.ref ? `<div class="ref">${esc(r.ref)}${r.ref_url ? ` <a href="${esc(r.ref_url)}" target="_blank" rel="noopener">Compare</a>` : ""}</div>` : "";
   const title = r.url ? `<a href="${esc(r.url)}" target="_blank" rel="noopener">${esc(r.title)}</a>` : esc(r.title);
   const outcome = r.outcome && !/^yes$/i.test(r.outcome) ? `<div class="outcome">${esc(r.outcome)}</div>` : "";
   return `<li class="m"><div><div class="title">${title}</div>${outcome}</div>
-    <div class="price"><b>${pct(p)}</b>${chg}</div>
+    <div class="price"><span class="lbl">YES price</span><b>${pct(p)}</b>${chg}</div>
     ${edgeHtml}${refHtml}
     <div class="bar" aria-hidden="true">${sp}${px}</div><div class="meta">${meta}</div></li>`;
 }
