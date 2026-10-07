@@ -408,7 +408,7 @@ def write_sqlite(rows, db_path):
 
 SITE_FIELDS = ["source", "market_id", "title", "outcome", "yes_price", "yes_bid",
                "yes_ask", "volume", "volume_24h", "close_time", "decision_time", "url", "prev_price",
-               "edge", "side", "basis", "conf", "ref", "ref_url"]
+               "edge", "side", "basis", "signal", "conf", "ref", "ref_url"]
 
 
 def load_previous_prices(out_dir, today):
@@ -431,6 +431,7 @@ def load_previous_prices(out_dir, today):
 
 TOP_N = 400            # markets in the "Top edges" tab
 MIN_SHOWN_EDGE = 0.20  # margin of safety: smaller edges aren't shown anywhere
+MIN_ARB_PROFIT = 0.05  # cross-platform arbitrage: guaranteed profit per $1 after both fees
 
 
 def category(r):
@@ -452,8 +453,18 @@ def build_tabs(rows, now):
     # Only calls with a large margin of safety are shown: a real signal (not 'thin'),
     # a side to take, and an edge of at least MIN_SHOWN_EDGE. Long shots have their own tab.
     def shown(r):
-        return (r.get("basis") not in (None, "", "thin", "extreme") and r.get("side")
-                and (r.get("edge") or 0) >= MIN_SHOWN_EDGE and upcoming(r))
+        return (r.get("basis") not in (None, "", "thin", "extreme") and r.get("signal") != "arb_cross"
+                and r.get("side") and (r.get("edge") or 0) >= MIN_SHOWN_EDGE and upcoming(r))
+
+    # cross-platform arbitrage: one row per pair, guaranteed profit after both fees
+    arbs, seen = [], set()
+    for r in sorted((r for r in rows if r.get("signal") == "arb_cross" and r.get("real_money")
+                     and (r.get("edge") or 0) >= MIN_ARB_PROFIT and upcoming(r)),
+                    key=lambda r: r["edge"], reverse=True):
+        pair = r.get("arb_pair") or f"{r['source']}:{r['market_id']}"
+        if pair not in seen:
+            seen.add(pair)
+            arbs.append(r)
 
     top = [r for r in rows if r.get("real_money") and shown(r)]
     top.sort(key=score, reverse=True)
@@ -465,6 +476,7 @@ def build_tabs(rows, now):
         "mentions": [r for r in rows if is_mention(r) and not r.get("no_signal") and shown(r)],
         "top": top[:TOP_N],
         "extreme": extreme,
+        "arbitrage": arbs,
     }
 
 

@@ -133,6 +133,7 @@ td.t a{color:inherit}
       <button class="tab" role="tab" data-tab="mentions">All mentions</button>
       <button class="tab" role="tab" data-tab="top">Top edges</button>
       <button class="tab" role="tab" data-tab="extreme">Long shots</button>
+      <button class="tab" role="tab" data-tab="arbitrage">Arbitrage</button>
       <button class="tab" role="tab" data-tab="track">Track record</button>
     </nav>
     <p class="tabnote" id="tabnote"></p>
@@ -185,6 +186,7 @@ const TABS = {
   mentions: {note:"Mention markets with a set agenda (earnings calls, Fed, company keynotes) deciding in the next 30 days, edge 20¢ or more. Political speeches are excluded."},
   top:      {note:"The model's biggest edges (20¢ or more) across every real-money market deciding in the next 30 days, from any signal."},
   extreme:  {note:"Long shots: the market prices YES or NO at 2¢ or less, but the other sources (combined without the market's own price) put the real probability at 20% or more. Small bets, big payouts; most will still lose."},
+  arbitrage:{note:"Cross-platform arbitrage: the same question priced differently on two real-money platforms, so buying YES on one and NO on the other costs less than the $1 one of them pays out. Listed only if the locked-in profit is 5¢ or more per $1 after both platforms' fees. Check that both markets resolve on the same rules and date before trading."},
   track:    {note:"Every call the model has made (5¢+ edge, including ones too small to show), logged when first flagged and scored when the market settles. Profit is per $1 contract at the price when logged, after fees."},
 };
 state.tab = TABS[location.hash.slice(1)] ? location.hash.slice(1) : "earnings";
@@ -257,7 +259,7 @@ function apply(){
   const terms = state.q.toLowerCase().split(/\s+/).filter(Boolean);
   view = rows.filter(r =>
     // margin of safety: only real calls of 20c+ (the data is pre-filtered too)
-    (state.tab === "extreme" || (r.side && r.basis !== "thin" && r.edge >= 0.20)) &&
+    (state.tab === "extreme" || state.tab === "arbitrage" || (r.side && r.basis !== "thin" && r.edge >= 0.20)) &&
     state.sources.has(r.source) &&
     !(state.realMoney && PLAY_MONEY.has(r.source)) &&
     (!state.solid || (r.conf ?? 0) >= 0.5) &&
@@ -302,7 +304,7 @@ function item(r){
   // what the suggested side costs right now: YES at the ask, NO at 1 - the YES bid
   const cost = r.side === "YES" ? ask : r.side === "NO" && bid != null ? 1 - bid : null;
   const edgeHtml = r.edge == null ? "" : `<div class="edge">
-      <span class="pill ${level}">${r.basis === "thin" ? "Edge up to " : "Edge +"}${pct(r.edge)}</span>
+      <span class="pill ${level}">${r.basis === "thin" ? "Edge up to " : r.signal === "arb_cross" ? "Locked profit +" : "Edge +"}${pct(r.edge)}</span>
       <span class="side">${r.side ? `Buy ${r.side}${cost != null ? ` at ${pct(cost)}` : ""}` : "Research"}</span>
       ${r.basis === "extreme" && cost ? `<span class="side">pays ${Math.round((1 - cost) / cost)}:1</span>` : ""}
       <span class="why">${BASIS[r.basis] || ""}, ${LEVEL[level].toLowerCase()}</span></div>`;

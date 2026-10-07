@@ -75,6 +75,8 @@ def record(entries, rows, snap, category_of):
             continue
         if r["source"] == "predictit":       # no public results API to settle against
             continue
+        if r.get("signal") == "arb_cross":   # two-leg trade; one leg's P&L would mislead
+            continue
         e = {"logged_utc": snap, "source": r["source"], "market_id": str(r["market_id"]),
              "event_id": r.get("event_id") or "", "title": r.get("title") or "",
              "outcome": r.get("outcome") or "", "category": category_of(r),

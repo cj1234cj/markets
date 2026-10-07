@@ -50,7 +50,7 @@ HISTORY_RECENT = 3      # the edge must also hold on just the last few events
 # is_unbettable in scraper.py.) Other rated mention series (Fed officials' speeches,
 # company keynotes) mix event types and Kalshi picks words to fit each event.
 SAME_FORMAT = re.compile(r"^KX(EARNINGSMENTION|FEDMENTION)")
-CONF = {"arb": 1.0, "extreme": 0.3, "ensemble": 0.8, "ensemble_mixed": 0.45, "history": 0.8, "history_mixed": 0.45, "cross": 0.75, "cross_play": 0.35, "bracket": 0.6, "longshot": 0.3, "thin": 0.2}
+CONF = {"arb": 1.0, "arb_cross": 1.0, "extreme": 0.3, "ensemble": 0.8, "ensemble_mixed": 0.45, "history": 0.8, "history_mixed": 0.45, "cross": 0.75, "cross_play": 0.35, "bracket": 0.6, "longshot": 0.3, "thin": 0.2}
 VENUE = {"kalshi": "Kalshi", "polymarket": "Polymarket", "predictit": "PredictIt", "manifold": "Manifold"}
 
 STOP = set("""the a an of in on at by to for will be is are and or vs before after during with what who which
@@ -216,10 +216,30 @@ def soon(r, hours=CROSS_MIN_HOURS):
     return (t - datetime.now(timezone.utc)).total_seconds() < hours * 3600
 
 
+def cheap_side(r):
+    """YES or NO can be bought for EXTREME_MAX_PRICE or less (a long-shot candidate)."""
+    return ((has_ask(r) and r["yes_ask"] <= EXTREME_MAX_PRICE)
+            or (has_bid(r) and 1 - r["yes_bid"] <= EXTREME_MAX_PRICE))
+
+
+def note_source(r, key, p, detail, keep="closest"):
+    """Generic (non-mention) source estimates for long shots: r['xest'] / r['xest_detail']."""
+    xe, xd = r.setdefault("xest", {}), r.setdefault("xest_detail", {})
+    if key in xe and keep == "max" and xe[key] >= p:
+        return
+    if key in xe and keep == "min" and xe[key] <= p:
+        return
+    xe[key], xd[key] = p, detail
+
+
 def cross_venue(rows):
-    # only markets with a real two-sided price, not deciding in the next day
+    # prices only from markets with a real two-sided quote, not deciding in the next day
     live = [r for r in rows if tight_mid(r) is not None and not soon(r)]
-    for r in live:
+    live_ids = {id(r) for r in live}
+    # long-shot candidates (one side <= 2c) get matched too, but only to record the
+    # other venue's price for extremes(); they don't get ordinary cross/arb calls
+    cheap = [r for r in rows if id(r) not in live_ids and cheap_side(r) and not soon(r)]
+    for r in live + cheap:
         r["_t"] = tokens(r)
         r["_n"] = key_numbers(r["_t"])
         r["_d"] = close_days(r)
@@ -233,7 +253,7 @@ def cross_venue(rows):
             if df[t] <= 200:                       # common words don't help matching
                 index[t].append(i)
 
-    for i, r in enumerate(live):
+    for r in live + cheap:
         rare = sorted((t for t in r["_t"] if t in index), key=lambda t: df[t])[:3]
         best = {}
         for j in {j for t in rare for j in index[t]}:
@@ -256,19 +276,29 @@ def cross_venue(rows):
         for src, (sim, o) in best.items():
             fair, play = tight_mid(o), not o.get("real_money")
             label = f"{VENUE[src]} at {cents(fair)}: {o.get('title')}" + (f" ({o.get('outcome')})" if o.get("outcome") and o["outcome"].lower() != "yes" else "")
+            note_source(r, "play_money" if play else f"venue_{src}", fair, label)
+            if id(r) not in live_ids:
+                continue
             for side in ("YES", "NO"):
                 offer(r, side, fair, "cross_play" if play else "cross", label, o.get("url", ""))
             # executable on both venues -> arbitrage
             if not play:
                 ob, oa = o.get("yes_bid"), o.get("yes_ask")
                 name = o.get("title") + (f" ({o.get('outcome')})" if o.get("outcome") and o["outcome"].lower() != "yes" else "")
-                if has_bid(o):  # buy YES here, buy NO there at 1 - their bid
-                    offer(r, "YES", ob - fee(src, 1 - ob), "arb",
-                          f"Also buy NO on {VENUE[src]} at {cents(1 - ob)}: {name}", o.get("url", ""))
-                if has_ask(o):  # buy NO here, buy YES there at their ask
-                    offer(r, "NO", oa + fee(src, oa), "arb",
-                          f"Also buy YES on {VENUE[src]} at {cents(oa)}: {name}", o.get("url", ""))
-    for r in live:
+                here = VENUE[r["source"]]
+                if has_bid(o) and has_ask(r):  # buy YES here, buy NO there at 1 - their bid
+                    cost = r["yes_ask"] + (1 - ob)
+                    offer(r, "YES", ob - fee(src, 1 - ob), "arb_cross",
+                          f"Buy YES on {here} at {cents(r['yes_ask'])} + buy NO on {VENUE[src]} at {cents(1 - ob)} "
+                          f"= {cents(cost)} for a guaranteed $1, before fees. Other leg: {name}", o.get("url", ""))
+                if has_ask(o) and has_bid(r):  # buy NO here, buy YES there at their ask
+                    cost = (1 - r["yes_bid"]) + oa
+                    offer(r, "NO", oa + fee(src, oa), "arb_cross",
+                          f"Buy NO on {here} at {cents(1 - r['yes_bid'])} + buy YES on {VENUE[src]} at {cents(oa)} "
+                          f"= {cents(cost)} for a guaranteed $1, before fees. Other leg: {name}", o.get("url", ""))
+                if r.get("signal") == "arb_cross" and r.get("ref_url") == o.get("url", ""):
+                    r["arb_pair"] = "|".join(sorted([f"{r['source']}:{r['market_id']}", f"{src}:{o['market_id']}"]))
+    for r in live + cheap:
         for k in ("_t", "_n", "_d"):
             r.pop(k, None)
 
@@ -286,6 +316,14 @@ def ladders(rows):
         legs.sort(key=lambda r: r["floor_strike"])
         for i, lo in enumerate(legs):            # P(above lo) must be >= P(above hi)
             for hi in legs[i + 1:]:
+                # bounds for long shots: lo is worth at least what hi is bid at,
+                # hi is worth at most what lo is offered at
+                if has_bid(hi):
+                    note_source(lo, "ladder_floor", hi["yes_bid"],
+                                f"higher strike {hi.get('outcome') or hi['floor_strike']} is bid {cents(hi['yes_bid'])}", keep="max")
+                if has_ask(lo):
+                    note_source(hi, "ladder_cap", lo["yes_ask"],
+                                f"lower strike {lo.get('outcome') or lo['floor_strike']} is offered at {cents(lo['yes_ask'])}", keep="min")
                 if has_ask(lo) and has_bid(hi) and hi["yes_bid"] > lo["yes_ask"]:
                     label = f"Higher strike {hi.get('outcome') or hi['floor_strike']} bids {cents(hi['yes_bid'])}"
                     offer(lo, "YES", hi["yes_bid"] - fee("kalshi", 1 - hi["yes_bid"]), "arb", label, hi.get("url", ""))
@@ -354,39 +392,67 @@ def event_day_reached(r, now):
 EXTREME_MAX_PRICE = 0.02   # the cheap side costs 2c or less...
 EXTREME_MIN_PROB = 0.20    # ...but the sources put the real probability at 20%+
 EXTREME_MIN_RATIO = 10     # (always true at these prices: 20% vs <= 2c)
+VENUE_WEIGHT = 0.30        # another real-money venue's price, when pooled with mention sources
 
 
 def extremes(rows):
     """Long shots: the market prices YES (or NO) at <= 2c, but the other sources,
     combined WITHOUT the market's own price, put it far higher. Kept apart from
     the main tabs (basis 'extreme') and tracked separately in the ledger."""
+    """Any real-money market. Evidence, never including the market's own price:
+      - mention markets: the sources.py estimates (needs 2+ of them)
+      - any market: the same question's price on another real-money venue
+      - Kalshi strike ladders: hard bounds (a lower strike is worth at least what a
+        higher one is bid at; a higher strike at most what a lower one is offered at)"""
     from datetime import datetime, timezone
     from sources import LABELS, pool
     weights, temp = load_weights()
     now = datetime.now(timezone.utc)
     for r in rows:
-        est = {k: v for k, v in (r.get("est") or {}).items() if k != "market"}
-        if len(est) < 2 or event_day_reached(r, now):
+        if not r.get("real_money") or not cheap_side(r) or event_day_reached(r, now):
             continue
         try:
-            if datetime.fromisoformat(str(r.get("decision_time")).replace("Z", "+00:00")) < now:
+            t = datetime.fromisoformat(str(r.get("decision_time") or r.get("close_time")).replace("Z", "+00:00"))
+            if (t if t.tzinfo else t.replace(tzinfo=timezone.utc)) < now:
                 continue
         except ValueError:
             continue
-        p = pool(est, weights, temp)
-        if p is None:
-            continue
+        mention = {k: v for k, v in (r.get("est") or {}).items() if k != "market"}
+        xe, xd = r.get("xest") or {}, r.get("xest_detail") or {}
+        venues = {k: v for k, v in xe.items() if k.startswith("venue_")}
+        est = (dict(mention) if len(mention) >= 2 else {}) | venues
+        w = dict(weights) | {k: VENUE_WEIGHT for k in venues}
+        p = pool(est, w, temp) if est else None
+        floor, cap = xe.get("ladder_floor"), xe.get("ladder_cap")
+
         detail = r.get("est_detail") or {}
-        label = ("Sources without the market: " + " · ".join(
-            f"{LABELS.get(k, k)} {cents(v)}" + (f" ({detail[k]})" if k in detail else "") for k, v in est.items())
-                 + f" → {cents(p)} chance of YES")
+        parts = [f"{LABELS.get(k, k)} {cents(v)}" + (f" ({detail[k]})" if k in detail else "")
+                 for k, v in est.items() if k in mention] + [xd[k] for k in venues]
         series = str(r["market_id"]).split("-")[0]
-        url = f"https://kalshi.com/markets/{series.lower()}"
-        if has_ask(r) and r["yes_ask"] <= EXTREME_MAX_PRICE and p >= max(EXTREME_MIN_PROB, EXTREME_MIN_RATIO * r["yes_ask"]):
-            offer(r, "YES", p, "extreme", label, url)
-        no_cost_ = 1 - r["yes_bid"] if has_bid(r) else None
-        if no_cost_ is not None and no_cost_ <= EXTREME_MAX_PRICE and (1 - p) >= max(EXTREME_MIN_PROB, EXTREME_MIN_RATIO * no_cost_):
-            offer(r, "NO", p, "extreme", label, url)
+        url = f"https://kalshi.com/markets/{series.lower()}" if r["source"] == "kalshi" else r.get("url", "")
+
+        def take(side, prob, cost, bound_text):
+            if prob is None or prob < max(EXTREME_MIN_PROB, EXTREME_MIN_RATIO * cost):
+                return
+            fair = prob if side == "YES" else 1 - prob
+            e = edge_for(r, side, fair)
+            if e is None or e <= 0:
+                return
+            label = ("Evidence without this market's price: " + " · ".join(parts + ([bound_text] if bound_text else []))
+                     + f" → {cents(prob)} chance of {side}")
+            r.update(edge=round(e, 4), side=side, basis="extreme", signal="extreme", conf=CONF["extreme"],
+                     ref=label, ref_url=url, _score=e * CONF["extreme"], fair=round(fair, 4),
+                     fair_raw=round(fair, 4), edge_raw=round(e, 4), price=cost, market_prob=mid(r))
+
+        if has_ask(r) and r["yes_ask"] <= EXTREME_MAX_PRICE:
+            cands = [(p, ""), (floor, f"ladder: {xd.get('ladder_floor')}" if floor is not None else "")]
+            prob, text = max(((x, t) for x, t in cands if x is not None), default=(None, ""))
+            take("YES", prob, r["yes_ask"], text)
+        if has_bid(r) and 1 - r["yes_bid"] <= EXTREME_MAX_PRICE:
+            cands = [(1 - p if p is not None else None, ""),
+                     (1 - cap if cap is not None else None, f"ladder: {xd.get('ladder_cap')}" if cap is not None else "")]
+            prob, text = max(((x, t) for x, t in cands if x is not None), default=(None, ""))
+            take("NO", prob, 1 - r["yes_bid"], text)
 
 
 def ensemble(rows):
