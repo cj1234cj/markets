@@ -306,7 +306,8 @@ function item(r){
 }
 
 /* ---------- Track record ---------- */
-const BASIS_NAMES = {history:"Past results", arb:"Arbitrage", cross:"Other venue disagrees",
+const BASIS_NAMES = {history:"Past results", history_mixed:"Past results (mixed event types)",
+  cross_play:"Other venue disagrees (play money)", arb:"Arbitrage", cross:"Other venue disagrees",
   bracket:"Outcomes add to over 100%", longshot:"Longshot bias", thin:"Thin market"};
 const CATEGORY_NAMES = {earnings:"Earnings calls", mentions:"Other mentions", other:"Other markets"};
 const signed = x => x == null ? "–" : `<span class="${x > 0 ? "pos" : x < 0 ? "neg" : ""}">${x > 0 ? "+" : ""}${(x*100).toFixed(1)}¢</span>`;

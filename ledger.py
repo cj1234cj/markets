@@ -33,7 +33,7 @@ CALIB_PRIOR = 30      # resolved calls needed before track record outweighs the 
 MAX_SETTLE_PER_RUN = 600
 
 FIELDS = ["logged_utc", "source", "market_id", "event_id", "title", "outcome", "category",
-          "basis", "side", "fair", "market_prob", "price", "edge", "conf", "decision_time",
+          "basis", "signal", "side", "fair", "market_prob", "price", "edge", "conf", "decision_time",
           "url", "status", "result", "settled_utc", "pnl"]
 
 
@@ -76,7 +76,8 @@ def record(entries, rows, snap, category_of):
         e = {"logged_utc": snap, "source": r["source"], "market_id": str(r["market_id"]),
              "event_id": r.get("event_id") or "", "title": r.get("title") or "",
              "outcome": r.get("outcome") or "", "category": category_of(r),
-             "basis": r["basis"], "side": r["side"], "fair": r.get("fair"),
+             "basis": r["basis"], "signal": r.get("signal") or r["basis"],
+             "side": r["side"], "fair": r.get("fair"),
              "market_prob": r.get("market_prob"), "price": r.get("price"),
              "edge": r.get("edge"), "conf": r.get("conf"),
              "decision_time": r.get("decision_time") or r.get("close_time") or "",
@@ -198,10 +199,20 @@ def stats(group):
             "brier_market": None if brier_market is None else round(brier_market, 4)}
 
 
+def signal(e):
+    """Full signal name. Rows logged before the field existed: mixed-event history
+    calls were the ones with confidence below 0.5."""
+    if e.get("signal"):
+        return e["signal"]
+    if e["basis"] == "history" and (f(e.get("conf")) or 1) < 0.5:
+        return "history_mixed"
+    return e["basis"]
+
+
 def summarize(entries, out_path, snap):
     settled = [e for e in entries if e["status"] == "settled"]
     groups = {}
-    for name, keyf in (("basis", lambda e: e["basis"]), ("category", lambda e: e["category"]),
+    for name, keyf in (("basis", signal), ("category", lambda e: e["category"]),
                        ("source", lambda e: e["source"]),
                        ("edge size", lambda e: bucket(f(e["edge"]) or 0))):
         g = defaultdict(list)

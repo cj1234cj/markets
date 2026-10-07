@@ -141,9 +141,10 @@ def offer(r, side, fair, basis, ref="", ref_url="", conf=None):
     if e is None or e <= 0:
         return
     short = basis.split("_")[0]
-    c = (CONF[basis] if conf is None else conf) * CALIBRATION.get(short, 1.0)
+    # calibrated per full signal (history vs history_mixed learn separately)
+    c = (CONF[basis] if conf is None else conf) * CALIBRATION.get(basis, CALIBRATION.get(short, 1.0))
     if e * c > r.get("_score", -1):
-        r.update(edge=round(e, 4), side=side, basis=short, conf=round(c, 3),
+        r.update(edge=round(e, 4), side=side, basis=short, signal=basis, conf=round(c, 3),
                  ref=ref, ref_url=ref_url, _score=e * c,
                  # for the track record (ledger.py)
                  fair=round(fair, 4), price=yes_cost(r) if side == "YES" else no_cost(r),
