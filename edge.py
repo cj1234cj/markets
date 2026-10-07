@@ -47,8 +47,8 @@ HISTORY_RECENT = 3      # the edge must also hold on just the last few events
 # Series where every event has the same format, so past results are comparable and
 # checkable against transcripts: earnings calls and FOMC press conferences.
 # (Political speeches, rallies, debates and TV interviews get no signal at all; see
-# is_unbettable in scraper.py.) Other rated mention series (Fed speeches, keynotes,
-# debates, speeches) mix event types and Kalshi picks words to fit each event.
+# is_unbettable in scraper.py.) Other rated mention series (Fed officials' speeches,
+# company keynotes) mix event types and Kalshi picks words to fit each event.
 SAME_FORMAT = re.compile(r"^KX(EARNINGSMENTION|FEDMENTION)")
 CONF = {"arb": 1.0, "history": 0.8, "history_mixed": 0.45, "cross": 0.75, "cross_play": 0.35, "bracket": 0.6, "longshot": 0.3, "thin": 0.2}
 VENUE = {"kalshi": "Kalshi", "polymarket": "Polymarket", "predictit": "PredictIt", "manifold": "Manifold"}
