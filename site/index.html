@@ -224,7 +224,7 @@ async function load(silent){
       return o;
     });
     const g = new Date(data.generated);
-    $("updated").textContent = `Updated ${g.toLocaleString(undefined,{dateStyle:"medium",timeStyle:"short"})}. Refreshes automatically every day.`;
+    $("updated").textContent = `Updated ${g.toLocaleString(undefined,{dateStyle:"medium",timeStyle:"short"})}. Refreshes automatically every 6 hours.`;
     $("counts").innerHTML = Object.keys(NAMES).map(s =>
       data.counts[s] != null ? `<span><span class="dot" style="background:var(--${s})"></span>${NAMES[s]} ${data.counts[s].toLocaleString()}</span>` :
       data.failed.includes(s) ? `<span class="warn"><span class="dot" style="background:var(--${s})"></span>${NAMES[s]} didn't load today</span>` : ""
@@ -319,7 +319,7 @@ async function loadTrack(silent){
     if(state.tab !== "track") return d.generated;
     renderTrack(d);
     const g = new Date(d.generated);
-    $("updated").textContent = `Updated ${g.toLocaleString(undefined,{dateStyle:"medium",timeStyle:"short"})}. Refreshes automatically every day.`;
+    $("updated").textContent = `Updated ${g.toLocaleString(undefined,{dateStyle:"medium",timeStyle:"short"})}. Refreshes automatically every 6 hours.`;
     lastLoad = Date.now();
     return d.generated;
   }catch(e){
