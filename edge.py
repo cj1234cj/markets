@@ -184,7 +184,20 @@ def cents(x):
 def tokens(r):
     text = f"{r.get('title') or ''} {r.get('outcome') or ''}".lower()
     text = re.sub(r"[^a-z0-9.%$ ]", " ", text)
-    return {w.strip(".") for w in text.split() if w.strip(".") and w.strip(".") not in STOP and len(w.strip(".")) > 1}
+    # single characters are noise, except digits: "4 - 4" vs "both to score" must not match
+    return {w.strip(".") for w in text.split() if w.strip(".") and w.strip(".") not in STOP
+            and (len(w.strip(".")) > 1 or w.strip(".").isdigit())}
+
+
+# Kinds of question that can share a game/team/asset but ask different things.
+MARKET_KIND = re.compile(r"exact score|both (?:teams )?to score|over/under|o/u|\bover\b|\bunder\b|spread|"
+                         r"handicap|total|\bdraw\b|halftime|half[- ]time|first half|\b1h\b|corners|cards|"
+                         r"to qualify|to advance|winner|win by|margin|up or down|above|below|between|"
+                         r"set \d|map \d|game \d|round \d", re.I)
+
+
+def market_kinds(r):
+    return {m.lower().replace("-", " ") for m in MARKET_KIND.findall(f"{r.get('title') or ''} {r.get('outcome') or ''}")}
 
 
 def key_numbers(ts):
@@ -276,6 +289,9 @@ def cross_venue(rows):
                 continue
             # "Will there be NO Gemini release" is the opposite of "Will Google release"
             if bool(NEGATION.search(r.get("title") or "")) != bool(NEGATION.search(o.get("title") or "")):
+                continue
+            # same game, different question ("exact score 4-4" vs "both to score")
+            if market_kinds(r) != market_kinds(o):
                 continue
             sim = len(r["_t"] & o["_t"]) / len(r["_t"] | o["_t"])
             if sim >= MATCH_MIN_SIMILARITY and sim > best.get(o["source"], (0, None))[0]:
@@ -428,6 +444,8 @@ def extremes(rows):
         mention = {k: v for k, v in (r.get("est") or {}).items() if k != "market"}
         xe, xd = r.get("xest") or {}, r.get("xest_detail") or {}
         venues = {k: v for k, v in xe.items() if k.startswith("venue_")}
+        if venues and len(mention) < 2 and max(venues.values()) > 0.5 and min(venues.values()) > 0.5:
+            venues = {}     # 2c here vs >50% elsewhere on a live market = a mismatched question
         est = (dict(mention) if len(mention) >= 2 else {}) | venues
         w = dict(weights) | {k: VENUE_WEIGHT for k in venues}
         p = pool(est, w, temp) if est else None

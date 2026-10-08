@@ -540,6 +540,7 @@ def load_previous_prices(out_dir, today):
 TOP_N = 400            # markets in the "Top edges" tab
 MIN_SHOWN_EDGE = 0.20  # margin of safety: smaller edges aren't shown anywhere
 MIN_ARB_PROFIT = 0.05  # cross-platform arbitrage: guaranteed profit per $1 after both fees
+MAX_PLAUSIBLE_ARB = 0.15  # bigger "arbitrage" between live platforms = two different questions
 
 
 def category(r):
@@ -567,7 +568,7 @@ def build_tabs(rows, now):
     # cross-platform arbitrage: one row per pair, guaranteed profit after both fees
     arbs, seen = [], set()
     for r in sorted((r for r in rows if r.get("signal") == "arb_cross" and r.get("real_money")
-                     and (r.get("edge") or 0) >= MIN_ARB_PROFIT and upcoming(r)),
+                     and MIN_ARB_PROFIT <= (r.get("edge") or 0) <= MAX_PLAUSIBLE_ARB and upcoming(r)),
                     key=lambda r: r["edge"], reverse=True):
         pair = r.get("arb_pair") or f"{r['source']}:{r['market_id']}"
         if pair not in seen:
