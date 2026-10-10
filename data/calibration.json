@@ -1,10 +1,10 @@
 {
- "generated": "2026-10-09T23:06:38+00:00",
+ "generated": "2026-10-10T06:50:34+00:00",
  "basis": {
   "bracket": {
-   "n": 6,
+   "n": 8,
    "delivered": 1.5,
-   "factor": 1.083
+   "factor": 1.105
   },
   "ensemble_mixed": {
    "n": 1,
@@ -12,9 +12,9 @@
    "factor": 0.968
   },
   "history": {
-   "n": 2,
-   "delivered": 0.558,
-   "factor": 0.972
+   "n": 6,
+   "delivered": 0.0,
+   "factor": 0.833
   },
   "history_mixed": {
    "n": 4,
