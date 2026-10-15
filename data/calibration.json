@@ -1,5 +1,5 @@
 {
- "generated": "2026-10-14T22:08:27+00:00",
+ "generated": "2026-10-15T05:42:21+00:00",
  "basis": {
   "arb": {
    "n": 9,
@@ -7,14 +7,14 @@
    "factor": 1.0
   },
   "bracket": {
-   "n": 24,
+   "n": 26,
    "delivered": 0.0,
-   "factor": 0.556
+   "factor": 0.536
   },
   "ensemble": {
-   "n": 4,
+   "n": 5,
    "delivered": 0.0,
-   "factor": 0.882
+   "factor": 0.857
   },
   "ensemble_mixed": {
    "n": 1,
@@ -27,9 +27,9 @@
    "factor": 0.882
   },
   "history": {
-   "n": 16,
+   "n": 17,
    "delivered": 0.0,
-   "factor": 0.652
+   "factor": 0.638
   },
   "history_mixed": {
    "n": 4,
