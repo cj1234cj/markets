@@ -539,6 +539,7 @@ def load_previous_prices(out_dir, today):
 
 TOP_N = 400            # markets in the "Top edges" tab
 MIN_SHOWN_EDGE = 0.20  # margin of safety: smaller edges aren't shown anywhere
+MENTIONS_DAYS = 14    # "All mentions" lists every mention market deciding this soon
 MIN_ARB_PROFIT = 0.05  # cross-platform arbitrage: guaranteed profit per $1 after both fees
 MAX_PLAUSIBLE_ARB = 0.15  # bigger "arbitrage" between live platforms = two different questions
 
@@ -582,7 +583,11 @@ def build_tabs(rows, now):
     return {
         "earnings": [r for r in rows if is_earnings_mention(r) and shown(r)],
         # political speeches, rallies, debates, TV interviews: eliminated entirely
-        "mentions": [r for r in rows if is_mention(r) and not r.get("no_signal") and shown(r)],
+        # plain list: every (non-political) mention market deciding in the next 2 weeks,
+        # whatever its edge, soonest first
+        "mentions": sorted((r for r in rows if is_mention(r) and not r.get("no_signal") and upcoming(r)
+                            and within(r.get("decision_time"), now + dt.timedelta(days=MENTIONS_DAYS))),
+                           key=lambda r: str(r.get("decision_time"))),
         "top": top[:TOP_N],
         "extreme": extreme,
         "arbitrage": arbs,
