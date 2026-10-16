@@ -3,3 +3,4 @@ __pycache__/
 *.db
 transcripts/
 data/news_cache.json
+exports/
