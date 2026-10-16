@@ -32,6 +32,14 @@ jobs:
           for f in earnings mentions top track; do
             curl -fsS "$base/$f.json?t=$(date +%s)" -o "site/data/$f.json" || echo "no $f.json yet"
           done
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Earnings-mention spreadsheet (next 14 days)
+        continue-on-error: true
+        run: |
+          pip install -q requests openpyxl
+          python mention_sheet.py --out site/data/earnings_mentions.xlsx
           ls -la site/data
       - uses: actions/configure-pages@v5
       - uses: actions/upload-pages-artifact@v3

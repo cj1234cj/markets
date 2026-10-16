@@ -51,6 +51,10 @@ jobs:
           done
           exit 1
 
+      - name: Earnings-mention spreadsheet (next 14 days)
+        continue-on-error: true
+        run: python mention_sheet.py --out site/data/earnings_mentions.xlsx
+
       - name: Copy today's CSVs next to the dashboard
         run: cp -r "data/$(date -u +%F)" site/data/csv || true
 

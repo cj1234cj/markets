@@ -11,6 +11,7 @@ Output: exports/earnings_mentions_<YYYY-MM-DD>.xlsx (git-ignored)
 
   python mention_sheet.py            # next 14 days
   python mention_sheet.py --days 21
+  python mention_sheet.py --out site/data/earnings_mentions.xlsx   # dashboard download (CI)
 """
 import argparse
 import datetime as dt
@@ -114,6 +115,7 @@ def style_header(ws):
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--days", type=int, default=14)
+    ap.add_argument("--out", help="output path (default exports/earnings_mentions_<date>.xlsx)")
     args = ap.parse_args()
 
     today = dt.date.today()
@@ -165,8 +167,8 @@ def main():
             cell.number_format = "ddd mmm d"
         sheet.cell(row=1, column=1).number_format = "General"
 
-    OUT_DIR.mkdir(exist_ok=True)
-    out = OUT_DIR / f"earnings_mentions_{today.isoformat()}.xlsx"
+    out = pathlib.Path(args.out) if args.out else OUT_DIR / f"earnings_mentions_{today.isoformat()}.xlsx"
+    out.parent.mkdir(parents=True, exist_ok=True)
     wb.save(out)
     print(f"{len(strikes)} strikes across {len(calls)} earnings calls "
           f"({today} to {horizon}) -> {out}")
