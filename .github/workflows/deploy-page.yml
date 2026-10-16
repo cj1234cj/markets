@@ -29,7 +29,7 @@ jobs:
         run: |
           mkdir -p site/data
           base="https://cj1234cj.github.io/markets/data"
-          for f in earnings mentions top track; do
+          for f in earnings mentions top extreme arbitrage track; do
             curl -fsS "$base/$f.json?t=$(date +%s)" -o "site/data/$f.json" || echo "no $f.json yet"
           done
       - uses: actions/setup-python@v5
