@@ -79,3 +79,10 @@ td.dp.hi{background:var(--good-bg);color:var(--up)}
 :root[data-theme="dark"]{--bad-bg:#3A1D1F;--mid-bg:#3A3215;--mid-ink:#F2C94C;--good-bg:#173323}
 @media (max-width:560px){.order{flex:1}.order input{flex:1;width:auto}}
 @media (max-width:560px){.controls{position:static} table.kt th:first-child,table.kt td:first-child{min-width:110px}}
+.size{font:inherit;font-size:13px;font-weight:600;padding:7px 10px;border-radius:999px;border:1px solid var(--line);
+  background:var(--panel);color:var(--ink);cursor:pointer}
+.size[aria-pressed="true"]{background:var(--ink);color:var(--bg);border-color:var(--ink)}
+td.part{background:var(--bad-bg);color:var(--down);font-weight:600;white-space:normal;min-width:120px;text-align:left}
+table.kt td b{font-weight:700}
+@media (max-width:560px){.order{flex-wrap:wrap}}
+body[data-src="kalshi"] .controls{flex-wrap:wrap} body[data-src="kalshi"] input[type=search]{flex:1 1 260px}

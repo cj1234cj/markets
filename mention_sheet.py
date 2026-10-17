@@ -207,24 +207,42 @@ def depth_fill(n):
     return RED if n < 100 else YELLOW if n <= 300 else GREEN
 
 
-def side(asks, ask_c, budget):
-    """Pre-trade numbers for buying one side: all-in cost, payout, depth, fill for `budget` dollars."""
-    cost = all_in(ask_c)
+SIZES = (50, 100, 250, 500)  # order sizes on the Fills sheet
+
+
+def sized_fill(asks, budget):
+    """Fill for one order size. When the whole visible book can't take it, there's no average
+    to quote: report the contracts available instead (a limit order is the only route)."""
     avg, avg_all_in, n, full = fill(asks, budget)
+    if not full:
+        return {"full": False, "n": n, "fill": None, "fill_all_in": None, "payout": None,
+                "text": f"partial fill: {n:,} contracts available" if n else "no offers in book"}
+    return {"full": True, "n": n, "fill": avg, "fill_all_in": avg_all_in,
+            "payout": payout(avg_all_in), "text": None}
+
+
+def side(asks, ask_c, budget):
+    """Pre-trade numbers for buying one side: all-in cost, payout, depth, fills by order size."""
+    cost = all_in(ask_c)
     return {"ask": ask_c, "all_in": cost, "payout": payout(cost), "depth": depth_within(asks),
-            "fill": avg, "fill_all_in": avg_all_in, "fill_n": n, "fill_full": full,
+            "fills": {b: sized_fill(asks, b) for b in sorted({*SIZES, budget})},
             "book": [[p, round(q, 2)] for p, q in asks]}
 
 
-def side_columns(name, k, usd):
+def fill_cell(f):
+    return f["text"] or f["fill_all_in"]
+
+
+def side_columns(name, k, budget):
+    usd = f"${budget:g}"
     return [
         (f"{name} ask ¢", lambda r: r[k]["ask"]),
-        (f"{name} all-in ¢ (with fee)", lambda r: r[k]["all_in"]),
-        (f"{name} payout % (profit per $1)", lambda r: r[k]["payout"]),
+        (f"{name} all-in ¢ (ask + fee)", lambda r: r[k]["all_in"]),
+        (f"{name} payout % at ask (profit per $1)", lambda r: r[k]["payout"]),
         (f"{name} contracts ≤3¢ of ask", lambda r: r[k]["depth"]),
-        (f"{name} {usd} avg fill ¢", lambda r: r[k]["fill"]),
-        (f"{name} {usd} all-in fill ¢", lambda r: r[k]["fill_all_in"]),
-        (f"{name} {usd} contracts", lambda r: r[k]["fill_n"]),
+        (f"{name} {usd} fill ¢ (with fees)", lambda r: fill_cell(r[k]["fills"][budget])),
+        (f"{name} {usd} fill ¢ (before fees)", lambda r: r[k]["fills"][budget]["fill"]),
+        (f"{name} payout % at {usd} fill", lambda r: r[k]["fills"][budget]["payout"]),
     ]
 
 
@@ -270,7 +288,7 @@ def main():
     usd = f"${args.order:g}"
     columns = ([("Call date", lambda r: r["date"]), ("Company", lambda r: r["company"]),
                 ("Word", lambda r: r["word"])]
-               + side_columns("Yes", "yes", usd) + side_columns("No", "no", usd)
+               + side_columns("Yes", "yes", args.order) + side_columns("No", "no", args.order)
                + [("Yes bid ¢", lambda r: r["yes_bid"]), ("No bid ¢", lambda r: r["no_bid"]),
                   ("Last ¢", lambda r: r["last"]), ("Spread ¢", lambda r: r["spread"]),
                   ("Volume", lambda r: r["volume"]), ("Volume 24h", lambda r: r["volume_24h"]),
@@ -283,37 +301,75 @@ def main():
     ws.append([h for h, _ in columns])
     for r in strikes:
         ws.append([get(r) for _, get in columns])
-    # colour flags: payout under 33% (cost above ~75¢) red; depth red/yellow/green;
-    # contracts red when the book can't take the whole order
+    # colour flags: payouts under 33% red; depth red/yellow/green; a partial fill red
     col = {h: i + 1 for i, (h, _) in enumerate(columns)}
     for row, r in enumerate(strikes, 2):
         for name, k in (("Yes", "yes"), ("No", "no")):
-            sd = r[k]
+            sd, f = r[k], r[k]["fills"][args.order]
             if sd["payout"] is not None and sd["payout"] < 33:
-                ws.cell(row, col[f"{name} payout % (profit per $1)"]).fill = RED
-            if f := depth_fill(sd["depth"]):
-                ws.cell(row, col[f"{name} contracts ≤3¢ of ask"]).fill = f
-            if not sd["fill_full"]:
-                ws.cell(row, col[f"{name} {usd} contracts"]).fill = RED
+                ws.cell(row, col[f"{name} payout % at ask (profit per $1)"]).fill = RED
+            if dfill := depth_fill(sd["depth"]):
+                ws.cell(row, col[f"{name} contracts ≤3¢ of ask"]).fill = dfill
+            if not f["full"]:
+                ws.cell(row, col[f"{name} {usd} fill ¢ (with fees)"]).fill = RED
+            elif f["payout"] is not None and f["payout"] < 33:
+                ws.cell(row, col[f"{name} payout % at {usd} fill"]).fill = RED
     style_header(ws)
     for c in ws[1]:
         c.alignment = Alignment(wrap_text=True, vertical="top")
     ws.row_dimensions[1].height = 45
     autosize(ws, {get_column_letter(i): 11 for i in range(4, 18)}
+             | {get_column_letter(col[f"{n} {usd} fill ¢ (with fees)"]): 16 for n in ("Yes", "No")}
              | {get_column_letter(len(columns)): 45})
 
+    # every order size side by side: fill with fees and the payout you'd actually get
+    wf = wb.create_sheet("Fills")
+    wf.append(["Call date", "Company", "Word"]
+              + [f"{n} ${b} {what}" for n in ("Yes", "No") for b in SIZES
+                 for what in ("fill ¢ (with fees)", "payout %")])
+    for row, r in enumerate(strikes, 2):
+        cells = [r["date"], r["company"], r["word"]]
+        for k in ("yes", "no"):
+            for b in SIZES:
+                f = r[k]["fills"][b]
+                cells += [fill_cell(f), f["payout"]]
+        wf.append(cells)
+        for i, k in enumerate(("yes", "no")):
+            for j, b in enumerate(SIZES):
+                f, c0 = r[k]["fills"][b], 4 + (i * len(SIZES) + j) * 2
+                if not f["full"]:
+                    wf.cell(row, c0).fill = RED
+                elif f["payout"] is not None and f["payout"] < 33:
+                    wf.cell(row, c0 + 1).fill = RED
+    style_header(wf)
+    for c in wf[1]:
+        c.alignment = Alignment(wrap_text=True, vertical="top")
+    wf.row_dimensions[1].height = 45
+    autosize(wf, {get_column_letter(i): 13 for i in range(4, 4 + 4 * len(SIZES))})
+
+    try:  # CI runs in UTC; show Eastern like the dashboard
+        from zoneinfo import ZoneInfo
+        now = dt.datetime.now(ZoneInfo("America/New_York"))
+    except Exception:
+        now = dt.datetime.now().astimezone()
+    updated = now.strftime("%a %b %d %Y, %I:%M %p %Z")
     ws3 = wb.create_sheet("Key")
     for line in [
+        ["Updated", f"{updated} (prices and order books as of this time; they move fast)"],
         ["All-in ¢", "Ask plus Kalshi's taker fee, 0.07 x P x (1 - P). Kalshi rounds the fee up to the "
                      "next cent per order, so a tiny order costs up to 1¢ more."],
-        ["Payout %", "Profit per $1 if the bet wins, at the all-in cost: 100 / all-in - 1. "
-                     "Red under 33% (cost above about 75¢)."],
+        ["Payout % at ask", "Profit per $1 if the bet wins, at the all-in ask: 100 / all-in - 1. "
+                            "Red under 33% (cost above about 75¢). Overstates the payout when slippage is "
+                            "large, so check payout at fill."],
         ["Contracts ≤3¢", "Contracts you can buy within 3¢ of the ask. Red under 100, yellow 100-300, "
                           "green above 300."],
-        [f"{usd} fill", f"Walks the full order book spending {usd} (fees included). Avg fill is the "
-                        f"average price before fees; all-in fill includes them. Contracts in red means "
-                        f"the book can't take the whole {usd}."],
-        ["Snapshot", "Prices and books are as of when this file was made; they move fast."],
+        [f"{usd} fill ¢", f"Walks the full order book spending {usd}, fees included in the {usd}. "
+                          f"'With fees' is comparable to all-in; 'before fees' is the raw book price."],
+        ["Payout at fill", "Profit per $1 at the with-fees fill price: what you'd actually get. Red under 33%."],
+        ["Partial fill", "The whole visible book can't take the order: shows the contracts available "
+                         "instead of a price (red). A limit order is the only route."],
+        ["Fills tab", f"The same fill and payout for ${', $'.join(map(str, SIZES))} orders. "
+                      f"The web page takes any size."],
     ]:
         ws3.append(line)
     ws3.column_dimensions["A"].width = 16
@@ -327,7 +383,7 @@ def main():
     autosize(ws2, {"F": 45})
     wb.move_sheet("Key", offset=1)
 
-    for sheet in (ws, ws2):
+    for sheet in (ws, wf, ws2):
         for (cell,) in sheet.iter_rows(min_row=2, max_col=1):
             cell.number_format = "ddd mmm d"
         sheet.cell(row=1, column=1).number_format = "General"

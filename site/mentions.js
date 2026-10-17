@@ -36,25 +36,39 @@
     return i < 0 ? t : t.slice(0, i) + "<mark>" + t.slice(i, i + q.length) + "</mark>" + t.slice(i + q.length);
   }
 
+  const pct = (v) => v == null ? "–" : Math.round(v) + "%";
+  const payoutAt = (cost) => cost ? (100 / cost - 1) * 100 : null;
+
   function sideCells(sd, budget) {
     if (!sd || sd.ask == null) return `<td class="dim">–</td><td></td><td></td><td></td><td class="sep"></td>`;
     const f = fill(sd.book, budget);
-    const slip = f ? f.avg - sd.ask : null;
-    const fillCell = !f ? `<td class="dim sep">no book</td>`
-      : `<td class="sep" title="All-in ${c(f.allIn)} with fees · ${n(f.n)} contracts">${c(f.avg)}` +
-        `<small class="${slip >= 3 ? "bad" : "dim"}">${slip > 0.05 ? "+" + c(slip) : "at ask"}</small>` +
-        (f.full ? "" : `<small class="bad">only ${n(f.n)}</small>`) + `</td>`;
-    return `<td><b>${c(sd.ask)}</b><small class="dim">${c(sd.all_in)} all-in</small></td>` +
-      `<td class="${sd.payout != null && sd.payout < 33 ? "bad" : ""}">${sd.payout == null ? "–" : Math.round(sd.payout) + "%"}</td>` +
-      `<td class="dp ${depthCls(sd.depth)}">${n(sd.depth)}</td>` + fillCell;
+    let fillCell, fillPay = `<td class="sep dim">–</td>`;
+    if (!f) {
+      fillCell = `<td class="part">No offers in book</td>`;
+    } else if (!f.full) {
+      // the whole visible book can't take the order: no honest average, only a limit order works
+      fillCell = `<td class="part" title="Average ${c(f.allIn)} with fees for what is there">Partial fill: ${n(f.n)} contracts available</td>`;
+    } else {
+      const slip = f.allIn - sd.all_in;
+      const p = payoutAt(f.allIn);
+      fillCell = `<td title="${n(f.n)} contracts"><b>${c(f.allIn)}</b>` +
+        `<small class="dim">${c(f.avg)} before fees</small>` +
+        `<small class="${slip >= 3 ? "bad" : "dim"}">${slip > 0.05 ? "+" + c(slip) + " slippage" : "no slippage"}</small></td>`;
+      fillPay = `<td class="sep ${p < 33 ? "bad" : ""}"><b>${pct(p)}</b></td>`;
+    }
+    return `<td><b>${c(sd.ask)}</b><small class="dim">${c(sd.all_in)} with fee</small></td>` +
+      `<td class="${sd.payout != null && sd.payout < 33 ? "bad" : ""}">${pct(sd.payout)}</td>` +
+      `<td class="dp ${depthCls(sd.depth)}">${n(sd.depth)}</td>` + fillCell + fillPay;
   }
 
   function kalshiTable(rows, q, budget) {
     const usd = "$" + budget.toLocaleString();
-    const head = (s) => `<th>${s} ask</th><th title="Profit per $1 if it wins, at the all-in cost">Payout</th>` +
-      `<th title="Contracts you can buy within 3¢ of the ask">≤3¢ depth</th><th class="sep" title="Average fill walking the order book, before fees">${usd} fill</th>`;
+    const head = (s) => `<th>${s} ask</th><th title="Profit per $1 if it wins, at the ask plus fee">Payout at ask</th>` +
+      `<th title="Contracts you can buy within 3¢ of the ask">≤3¢ depth</th>` +
+      `<th title="Average price walking the order book, fees included">${usd} fill<br>(with fees)</th>` +
+      `<th class="sep" title="Profit per $1 at the ${usd} fill price, fees included">Payout at fill</th>`;
     return `<table class="kt">
-      <thead><tr><th rowspan="2">Word</th><th colspan="4" class="grp sep">Buy Yes</th><th colspan="4" class="grp sep">Buy No</th><th rowspan="2">Volume</th></tr>
+      <thead><tr><th rowspan="2">Word</th><th colspan="5" class="grp sep">Buy Yes</th><th colspan="5" class="grp sep">Buy No</th><th rowspan="2">Volume</th></tr>
       <tr>${head("Yes")}${head("No")}</tr></thead>
       <tbody>${rows.map((s) => `<tr><td class="w">${hl(s.word, q)}</td>${sideCells(s.yes, budget)}${sideCells(s.no, budget)}<td>${n(s.volume)}</td></tr>`).join("")}</tbody>
     </table>`;
@@ -107,7 +121,7 @@
     }
     $("list").innerHTML = html.join("") || `<p class="empty">No words match.</p>`;
     $("summary").textContent = `${shown} words across ${calls} earnings call${calls === 1 ? "" : "s"}` +
-      (kalshi ? " · Ask is the best price; all-in adds Kalshi's fee (0.07 × P × (1−P)). Payout is profit per $1 at the all-in cost, red under 33%. Depth: red under 100, yellow 100–300, green over 300. Fill walks the order book; +¢ is slippage over the ask."
+      (kalshi ? ` · Fees (0.07 × P × (1−P)) are included in every figure except "before fees". Payout = profit per $1, red under 33%; payout at fill is what a $${budget.toLocaleString()} order would actually earn. Depth: red under 100, yellow 100–300, green over 300. Partial fill = the whole book can't take the order, so only a limit order works.`
               : " · Yes and No are ask prices (what it costs to buy)");
   }
 
@@ -124,6 +138,11 @@
       if (kalshi) $("sort").insertAdjacentHTML("beforeend",
         `<option value="payout">Best Yes payout</option><option value="depth">Most Yes depth</option>`);
       for (const id of ["q", "when", "sort", "order"]) $(id)?.addEventListener("input", render);
+      const sizes = document.querySelectorAll(".size");
+      const markSize = () => sizes.forEach((b) => b.setAttribute("aria-pressed", String(b.dataset.v === $("order").value)));
+      sizes.forEach((b) => b.addEventListener("click", () => { $("order").value = b.dataset.v; markSize(); render(); }));
+      $("order")?.addEventListener("input", markSize);
+      if (sizes.length) markSize();
       render();
     })
     .catch(() => {
