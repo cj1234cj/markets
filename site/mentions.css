@@ -59,11 +59,11 @@ mark{background:#FFE58A;color:inherit;border-radius:2px}
 @media (max-width:560px){.hide-sm,.meter{display:none} th,td{padding:8px 7px} .controls{flex-wrap:wrap} input[type=search]{flex:1 1 100%} select{flex:1}}
 @media (min-width:640px){h1{font-size:38px}}
 /* Kalshi pre-trade table */
-body[data-src="kalshi"] .wrap{max-width:1180px}
+body[data-src="kalshi"] .wrap{max-width:1640px}
 .order{display:flex;align-items:center;gap:6px;font-size:14px;color:var(--muted);white-space:nowrap}
 .order input{width:92px;font:inherit;font-size:16px;padding:8px 9px;border:1px solid var(--line);border-radius:10px;
   background:var(--panel);color:var(--ink)}
-table.kt th,table.kt td{padding:7px 9px;vertical-align:top}
+table.kt{font-size:13.5px} table.kt th,table.kt td{padding:6px 7px;vertical-align:top} table.kt th:first-child,table.kt td:first-child{min-width:118px}
 table.kt th.grp{text-align:center;color:var(--ink);border-bottom:1px solid var(--line)}
 table.kt .sep{border-right:1px solid var(--line)}
 table.kt td small{display:block;font-size:11.5px;line-height:1.2;margin-top:1px}
