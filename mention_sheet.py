@@ -11,10 +11,11 @@ Output: exports/earnings_mentions_<YYYY-MM-DD>.xlsx (git-ignored)
 
   python mention_sheet.py            # next 14 days
   python mention_sheet.py --days 21
-  python mention_sheet.py --out site/data/earnings_mentions.xlsx   # dashboard download (CI)
+  python mention_sheet.py --out site/data/earnings_mentions.xlsx --json site/data/kalshi_mentions.json   # dashboard (CI)
 """
 import argparse
 import datetime as dt
+import json
 import pathlib
 import re
 import time
@@ -104,6 +105,24 @@ def autosize(ws, widths=None):
         ws.column_dimensions[letter].width = min(max(10, longest + 2), 50)
 
 
+def write_json(path, source, today, horizon, strikes, cols):
+    """Strikes grouped by call, for the readable mentions page. `cols` maps JSON keys to row indexes;
+    each row must start with date, company and end with the event link."""
+    events = {}
+    for r in strikes:
+        key = (r[0], r[1], r[-1])
+        ev = events.setdefault(key, {"date": r[0].isoformat(), "company": r[1], "url": r[-1], "strikes": []})
+        ev["strikes"].append({k: r[i] for k, i in cols.items()})
+    for ev in events.values():
+        ev["volume"] = sum(s.get("volume") or 0 for s in ev["strikes"])
+    payload = {"source": source, "from": today.isoformat(), "to": horizon.isoformat(),
+               "generated": dt.datetime.now(dt.timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
+               "events": list(events.values())}
+    path = pathlib.Path(path)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(json.dumps(payload, separators=(",", ":")), encoding="utf-8")
+
+
 def style_header(ws):
     for c in ws[1]:
         c.font = Font(bold=True, color="FFFFFF")
@@ -116,6 +135,7 @@ def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--days", type=int, default=14)
     ap.add_argument("--out", help="output path (default exports/earnings_mentions_<date>.xlsx)")
+    ap.add_argument("--json", help="also write strikes grouped by call, for the web page")
     args = ap.parse_args()
 
     today = dt.date.today()
@@ -170,6 +190,10 @@ def main():
     out = pathlib.Path(args.out) if args.out else OUT_DIR / f"earnings_mentions_{today.isoformat()}.xlsx"
     out.parent.mkdir(parents=True, exist_ok=True)
     wb.save(out)
+    if args.json:
+        write_json(args.json, "kalshi", today, horizon, strikes,
+                   {"word": 2, "yes_bid": 3, "yes_ask": 4, "no_bid": 5, "no_ask": 6, "last": 7,
+                    "spread": 8, "volume": 9, "volume_24h": 10})
     print(f"{len(strikes)} strikes across {len(calls)} earnings calls "
           f"({today} to {horizon}) -> {out}")
 

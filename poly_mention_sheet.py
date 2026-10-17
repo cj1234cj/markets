@@ -24,7 +24,7 @@ import time
 
 from openpyxl import Workbook
 
-from mention_sheet import OUT_DIR, autosize, get_json, style_header
+from mention_sheet import OUT_DIR, autosize, get_json, style_header, write_json
 
 GAMMA = "https://gamma-api.polymarket.com"
 
@@ -94,6 +94,7 @@ def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--days", type=int, default=14)
     ap.add_argument("--out", help="output path (default exports/polymarket_mentions_<date>.xlsx)")
+    ap.add_argument("--json", help="also write strikes grouped by call, for the web page")
     args = ap.parse_args()
 
     today = dt.date.today()
@@ -152,6 +153,10 @@ def main():
     out = pathlib.Path(args.out) if args.out else OUT_DIR / f"polymarket_mentions_{today.isoformat()}.xlsx"
     out.parent.mkdir(parents=True, exist_ok=True)
     wb.save(out)
+    if args.json:
+        write_json(args.json, "polymarket", today, horizon, strikes,
+                   {"word": 2, "yes_bid": 3, "yes_ask": 4, "no_bid": 5, "no_ask": 6, "last": 8,
+                    "spread": 9, "volume": 10, "volume_24h": 11})
     print(f"{len(strikes)} strikes across {len(calls)} earnings calls "
           f"({today} to {horizon}) -> {out}")
 

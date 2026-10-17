@@ -1,0 +1,38 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Kalshi earnings mentions</title>
+<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>🎙️</text></svg>">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Instrument+Sans:wght@400;500;600;700&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="mentions.css">
+<style>:root{--accent:#0E9F6E}</style>
+</head>
+<body data-src="kalshi">
+<div class="wrap">
+  <nav>
+    <a href="./">← Dashboard</a>
+    <a href="kalshi.html" aria-current="page">Kalshi mentions</a>
+    <a href="polymarket.html">Polymarket mentions</a>
+  </nav>
+  <h1><span class="src">Kalshi</span> earnings-call mentions</h1>
+  <p class="updated" id="updated">Loading…</p>
+  <a class="sheet" href="data/earnings_mentions.xlsx" download>Download Kalshi sheet</a>
+  <div class="controls">
+    <input type="search" id="q" placeholder="Search company or word" aria-label="Search company or word">
+    <select id="when" aria-label="Date"><option value="">All dates</option></select>
+    <select id="sort" aria-label="Sort words">
+      <option value="price">Highest Yes</option>
+      <option value="volume">Most volume</option>
+      <option value="word">A–Z</option>
+    </select>
+  </div>
+  <p class="summary" id="summary"></p>
+  <div id="list"></div>
+</div>
+<script src="mentions.js"></script>
+</body>
+</html>

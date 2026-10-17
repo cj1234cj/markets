@@ -53,11 +53,11 @@ jobs:
 
       - name: Earnings-mention spreadsheet (next 14 days)
         continue-on-error: true
-        run: python mention_sheet.py --out site/data/earnings_mentions.xlsx
+        run: python mention_sheet.py --out site/data/earnings_mentions.xlsx --json site/data/kalshi_mentions.json
 
       - name: Polymarket earnings-mention spreadsheet (next 14 days)
         continue-on-error: true
-        run: python poly_mention_sheet.py --out site/data/polymarket_mentions.xlsx
+        run: python poly_mention_sheet.py --out site/data/polymarket_mentions.xlsx --json site/data/polymarket_mentions.json
 
       - name: Copy today's CSVs next to the dashboard
         run: cp -r "data/$(date -u +%F)" site/data/csv || true

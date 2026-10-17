@@ -5,7 +5,7 @@ name: Publish page only
 on:
   push:
     branches: [main]
-    paths: ["site/index.html"]
+    paths: ["site/*.html", "site/*.css", "site/*.js"]
   workflow_dispatch:
 
 permissions:
@@ -39,8 +39,8 @@ jobs:
         continue-on-error: true
         run: |
           pip install -q requests openpyxl
-          python mention_sheet.py --out site/data/earnings_mentions.xlsx
-          python poly_mention_sheet.py --out site/data/polymarket_mentions.xlsx
+          python mention_sheet.py --out site/data/earnings_mentions.xlsx --json site/data/kalshi_mentions.json
+          python poly_mention_sheet.py --out site/data/polymarket_mentions.xlsx --json site/data/polymarket_mentions.json
           ls -la site/data
       - uses: actions/configure-pages@v5
       - uses: actions/upload-pages-artifact@v3
