@@ -22,7 +22,7 @@ import time
 
 import requests
 from openpyxl import Workbook
-from openpyxl.styles import Font, PatternFill
+from openpyxl.styles import Alignment, Font, PatternFill
 from openpyxl.utils import get_column_letter
 
 KALSHI = "https://api.elections.kalshi.com/trade-api/v2"
@@ -95,25 +95,62 @@ def fetch_events():
         time.sleep(0.1)
 
 
-def depth_within(levels, window=3):
-    """Contracts you can buy within `window`¢ of the best ask. Kalshi books list bids only:
-    buying YES fills against NO bids (YES ask = 100 - best NO bid), so pass the opposite side."""
-    book = [(round(float(p) * 10000), float(q)) for p, q in levels or []]
-    if not book:
+FEE_RATE = 0.07  # Kalshi taker fee: 0.07 x C x P x (1-P), rounded up to the cent per order
+
+
+def fee(price_c):
+    """Taker fee per contract in cents at a price in cents (before the per-order round-up)."""
+    p = price_c / 100
+    return FEE_RATE * p * (1 - p) * 100
+
+
+def all_in(price_c):
+    return None if price_c is None else round(price_c + fee(price_c), 2)
+
+
+def payout(cost_c):
+    """Profit per $1 staked if the bet wins, in %."""
+    return None if not cost_c else round((100 / cost_c - 1) * 100, 1)
+
+
+def asks_from(opposite_bids):
+    """Kalshi books list bids only. Buying YES fills against NO bids (a NO bid at p is a YES ask
+    at 100 - p), so turn the opposite side's bids into asks, cheapest first: [(price ¢, qty)]."""
+    return sorted((round(100 - float(p) * 100, 2), float(q)) for p, q in opposite_bids or [])
+
+
+def depth_within(asks, window=3):
+    """Contracts you can buy within `window`¢ of the best ask."""
+    if not asks:
         return 0
-    best = max(p for p, _ in book)
-    return round(sum(q for p, q in book if p >= best - window * 100))
+    return round(sum(q for p, q in asks if p <= asks[0][0] + window + 1e-9))
 
 
-def fetch_depth(tickers, window=3):
-    """{ticker: (yes_depth, no_depth)} from the batch orderbook endpoint, 100 tickers per call."""
+def fill(asks, budget):
+    """Walk the book spending `budget` dollars, fees included.
+    Returns (avg price ¢ before fees, avg all-in ¢, contracts, filled in full)."""
+    left, n, spent = budget * 100, 0.0, 0.0
+    for p, q in asks:
+        cost = p + fee(p)
+        take = min(q, left / cost)
+        n += take
+        spent += take * p
+        left -= take * cost
+        if left <= 1e-9:
+            break
+    if not n:
+        return None, None, 0, False
+    return round(spent / n, 2), round((budget * 100 - left) / n, 2), round(n), left <= 1e-6
+
+
+def fetch_books(tickers):
+    """{ticker: (yes asks, no asks)} from the batch orderbook endpoint, 100 tickers per call."""
     out = {}
     for i in range(0, len(tickers), 100):
         params = [("tickers", t) for t in tickers[i:i + 100]]
         for ob in get_json(f"{KALSHI}/markets/orderbooks", params).get("orderbooks", []):
             book = ob.get("orderbook_fp") or {}
-            out[ob["ticker"]] = (depth_within(book.get("no_dollars"), window),
-                                 depth_within(book.get("yes_dollars"), window))
+            out[ob["ticker"]] = (asks_from(book.get("no_dollars")), asks_from(book.get("yes_dollars")))
         time.sleep(0.1)
     return out
 
@@ -128,14 +165,20 @@ def autosize(ws, widths=None):
         ws.column_dimensions[letter].width = min(max(10, longest + 2), 50)
 
 
-def write_json(path, source, today, horizon, strikes, cols):
-    """Strikes grouped by call, for the readable mentions page. `cols` maps JSON keys to row indexes;
-    each row must start with date, company and end with the event link."""
+def write_json(path, source, today, horizon, strikes, cols=None):
+    """Strikes grouped by call, for the readable mentions page. Rows are lists that start with
+    date, company and end with the event link, picked into JSON by `cols` ({key: index}), or
+    dicts with "date", "company", "url" keys (cols=None)."""
     events = {}
     for r in strikes:
-        key = (r[0], r[1], r[-1])
-        ev = events.setdefault(key, {"date": r[0].isoformat(), "company": r[1], "url": r[-1], "strikes": []})
-        ev["strikes"].append({k: r[i] for k, i in cols.items()})
+        if cols is None:
+            key, s = (r["date"], r["company"], r["url"]), {k: v for k, v in r.items()
+                                                         if k not in ("date", "company", "url")}
+        else:
+            key, s = (r[0], r[1], r[-1]), {k: r[i] for k, i in cols.items()}
+        ev = events.setdefault(key, {"date": key[0].isoformat(), "company": key[1], "url": key[2],
+                                     "strikes": []})
+        ev["strikes"].append(s)
     for ev in events.values():
         ev["volume"] = sum(s.get("volume") or 0 for s in ev["strikes"])
     payload = {"source": source, "from": today.isoformat(), "to": horizon.isoformat(),
@@ -154,54 +197,127 @@ def style_header(ws):
     ws.auto_filter.ref = ws.dimensions
 
 
+RED, YELLOW, GREEN = (PatternFill("solid", fgColor=c) for c in ("F8CBAD", "FFE699", "C6EFCE"))
+
+
+def depth_fill(n):
+    """Thin books stand out: red under 100 contracts, yellow 100-300, green above 300."""
+    if n is None:
+        return None
+    return RED if n < 100 else YELLOW if n <= 300 else GREEN
+
+
+def side(asks, ask_c, budget):
+    """Pre-trade numbers for buying one side: all-in cost, payout, depth, fill for `budget` dollars."""
+    cost = all_in(ask_c)
+    avg, avg_all_in, n, full = fill(asks, budget)
+    return {"ask": ask_c, "all_in": cost, "payout": payout(cost), "depth": depth_within(asks),
+            "fill": avg, "fill_all_in": avg_all_in, "fill_n": n, "fill_full": full,
+            "book": [[p, round(q, 2)] for p, q in asks]}
+
+
+def side_columns(name, k, usd):
+    return [
+        (f"{name} ask ¢", lambda r: r[k]["ask"]),
+        (f"{name} all-in ¢ (with fee)", lambda r: r[k]["all_in"]),
+        (f"{name} payout % (profit per $1)", lambda r: r[k]["payout"]),
+        (f"{name} contracts ≤3¢ of ask", lambda r: r[k]["depth"]),
+        (f"{name} {usd} avg fill ¢", lambda r: r[k]["fill"]),
+        (f"{name} {usd} all-in fill ¢", lambda r: r[k]["fill_all_in"]),
+        (f"{name} {usd} contracts", lambda r: r[k]["fill_n"]),
+    ]
+
+
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--days", type=int, default=14)
+    ap.add_argument("--order", type=float, default=100, help="order size in $ for the fill estimate")
     ap.add_argument("--out", help="output path (default exports/earnings_mentions_<date>.xlsx)")
     ap.add_argument("--json", help="also write strikes grouped by call, for the web page")
     args = ap.parse_args()
 
     today = dt.date.today()
     horizon = today + dt.timedelta(days=args.days)
-    events = fetch_events()
-    depth = fetch_depth([m["ticker"] for e in events if (d := event_date(e["event_ticker"]))
-                         and today <= d <= horizon for m in e.get("markets", [])])
+    events = [e for e in fetch_events()
+              if (d := event_date(e["event_ticker"])) and today <= d <= horizon]
+    books = fetch_books([m["ticker"] for e in events for m in e.get("markets", [])])
 
     strikes, calls = [], []
     for e in events:
         day = event_date(e["event_ticker"])
-        if day is None or not (today <= day <= horizon):
-            continue
         company = company_name(e)
         url = f"https://kalshi.com/markets/{e.get('series_ticker', '').lower()}"
         markets = [m for m in e.get("markets", []) if m.get("status") in ("active", "open", None)]
         for m in markets:
             yes_bid, yes_ask = cents(m, "yes_bid"), cents(m, "yes_ask")
-            yes_depth, no_depth = depth.get(m.get("ticker"), (None, None))
-            strikes.append([
-                day, company, m.get("yes_sub_title") or m.get("subtitle") or "",
-                yes_bid, yes_ask, cents(m, "no_bid"), cents(m, "no_ask"), cents(m, "last_price"),
-                (yes_ask - yes_bid) if yes_bid is not None and yes_ask is not None else None,
-                yes_depth, no_depth,
-                qty(m, "volume"), qty(m, "volume_24h"), qty(m, "open_interest"),
-                m.get("ticker"), url,
-            ])
+            yes_asks, no_asks = books.get(m.get("ticker"), ([], []))
+            strikes.append({
+                "date": day, "company": company, "url": url,
+                "word": m.get("yes_sub_title") or m.get("subtitle") or "",
+                "yes": side(yes_asks, yes_ask, args.order),
+                "no": side(no_asks, cents(m, "no_ask"), args.order),
+                "yes_bid": yes_bid, "no_bid": cents(m, "no_bid"), "last": cents(m, "last_price"),
+                "spread": (yes_ask - yes_bid) if yes_bid is not None and yes_ask is not None else None,
+                "volume": qty(m, "volume"), "volume_24h": qty(m, "volume_24h"),
+                "open_interest": qty(m, "open_interest"), "ticker": m.get("ticker"),
+            })
         calls.append([day, company, e["event_ticker"], len(markets),
                       sum(qty(m, "volume") or 0 for m in markets), url])
 
-    strikes.sort(key=lambda r: (r[0], r[1], r[2].lower()))
+    strikes.sort(key=lambda r: (r["date"], r["company"], r["word"].lower()))
     calls.sort(key=lambda r: (r[0], r[1]))
+
+    usd = f"${args.order:g}"
+    columns = ([("Call date", lambda r: r["date"]), ("Company", lambda r: r["company"]),
+                ("Word", lambda r: r["word"])]
+               + side_columns("Yes", "yes", usd) + side_columns("No", "no", usd)
+               + [("Yes bid ¢", lambda r: r["yes_bid"]), ("No bid ¢", lambda r: r["no_bid"]),
+                  ("Last ¢", lambda r: r["last"]), ("Spread ¢", lambda r: r["spread"]),
+                  ("Volume", lambda r: r["volume"]), ("Volume 24h", lambda r: r["volume_24h"]),
+                  ("Open interest", lambda r: r["open_interest"]), ("Ticker", lambda r: r["ticker"]),
+                  ("Kalshi link", lambda r: r["url"])])
 
     wb = Workbook()
     ws = wb.active
     ws.title = "Strikes"
-    ws.append(["Call date", "Company", "Word", "Yes bid ¢", "Yes ask ¢", "No bid ¢", "No ask ¢",
-               "Last ¢", "Spread ¢", "Yes contracts ≤3¢ of ask", "No contracts ≤3¢ of ask",
-               "Volume", "Volume 24h", "Open interest", "Ticker", "Kalshi link"])
+    ws.append([h for h, _ in columns])
     for r in strikes:
-        ws.append(r)
+        ws.append([get(r) for _, get in columns])
+    # colour flags: payout under 33% (cost above ~75¢) red; depth red/yellow/green;
+    # contracts red when the book can't take the whole order
+    col = {h: i + 1 for i, (h, _) in enumerate(columns)}
+    for row, r in enumerate(strikes, 2):
+        for name, k in (("Yes", "yes"), ("No", "no")):
+            sd = r[k]
+            if sd["payout"] is not None and sd["payout"] < 33:
+                ws.cell(row, col[f"{name} payout % (profit per $1)"]).fill = RED
+            if f := depth_fill(sd["depth"]):
+                ws.cell(row, col[f"{name} contracts ≤3¢ of ask"]).fill = f
+            if not sd["fill_full"]:
+                ws.cell(row, col[f"{name} {usd} contracts"]).fill = RED
     style_header(ws)
-    autosize(ws, {"J": 14, "K": 14, "P": 45})
+    for c in ws[1]:
+        c.alignment = Alignment(wrap_text=True, vertical="top")
+    ws.row_dimensions[1].height = 45
+    autosize(ws, {get_column_letter(i): 11 for i in range(4, 18)}
+             | {get_column_letter(len(columns)): 45})
+
+    ws3 = wb.create_sheet("Key")
+    for line in [
+        ["All-in ¢", "Ask plus Kalshi's taker fee, 0.07 x P x (1 - P). Kalshi rounds the fee up to the "
+                     "next cent per order, so a tiny order costs up to 1¢ more."],
+        ["Payout %", "Profit per $1 if the bet wins, at the all-in cost: 100 / all-in - 1. "
+                     "Red under 33% (cost above about 75¢)."],
+        ["Contracts ≤3¢", "Contracts you can buy within 3¢ of the ask. Red under 100, yellow 100-300, "
+                          "green above 300."],
+        [f"{usd} fill", f"Walks the full order book spending {usd} (fees included). Avg fill is the "
+                        f"average price before fees; all-in fill includes them. Contracts in red means "
+                        f"the book can't take the whole {usd}."],
+        ["Snapshot", "Prices and books are as of when this file was made; they move fast."],
+    ]:
+        ws3.append(line)
+    ws3.column_dimensions["A"].width = 16
+    ws3.column_dimensions["B"].width = 110
 
     ws2 = wb.create_sheet("Events")
     ws2.append(["Call date", "Company", "Event ticker", "Strikes", "Total volume", "Kalshi link"])
@@ -209,6 +325,7 @@ def main():
         ws2.append(r)
     style_header(ws2)
     autosize(ws2, {"F": 45})
+    wb.move_sheet("Key", offset=1)
 
     for sheet in (ws, ws2):
         for (cell,) in sheet.iter_rows(min_row=2, max_col=1):
@@ -219,9 +336,7 @@ def main():
     out.parent.mkdir(parents=True, exist_ok=True)
     wb.save(out)
     if args.json:
-        write_json(args.json, "kalshi", today, horizon, strikes,
-                   {"word": 2, "yes_bid": 3, "yes_ask": 4, "no_bid": 5, "no_ask": 6, "last": 7,
-                    "spread": 8, "yes_depth": 9, "no_depth": 10, "volume": 11, "volume_24h": 12})
+        write_json(args.json, "kalshi", today, horizon, strikes)
     print(f"{len(strikes)} strikes across {len(calls)} earnings calls "
           f"({today} to {horizon}) -> {out}")
 

@@ -8,7 +8,7 @@
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=Instrument+Sans:wght@400;500;600;700&display=swap" rel="stylesheet">
-<link rel="stylesheet" href="mentions.css">
+<link rel="stylesheet" href="mentions.css?v=3">
 <style>:root{--accent:#0E9F6E}</style>
 </head>
 <body data-src="kalshi">
@@ -24,6 +24,7 @@
   <div class="controls">
     <input type="search" id="q" placeholder="Search company or word" aria-label="Search company or word">
     <select id="when" aria-label="Date"><option value="">All dates</option></select>
+    <label class="order">Buy $<input type="number" id="order" value="100" min="1" step="10" inputmode="decimal" aria-label="Order size in dollars"></label>
     <select id="sort" aria-label="Sort words">
       <option value="price">Highest Yes</option>
       <option value="volume">Most volume</option>
@@ -33,6 +34,6 @@
   <p class="summary" id="summary"></p>
   <div id="list"></div>
 </div>
-<script src="mentions.js"></script>
+<script src="mentions.js?v=3"></script>
 </body>
 </html>
