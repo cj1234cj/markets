@@ -229,6 +229,12 @@ def side(asks, ask_c, budget):
             "book": [[p, round(q, 2)] for p, q in asks]}
 
 
+def side_ok(sd, budget):
+    """Tradeable side: depth isn't red (100+ within 3¢), the order fills in full, payout at fill >= 33%."""
+    f = sd["fills"][budget]
+    return sd["ask"] is not None and sd["depth"] >= 100 and f["full"] and (f["payout"] or 0) >= 33
+
+
 def fill_cell(f):
     return f["text"] or f["fill_all_in"]
 
@@ -282,7 +288,10 @@ def main():
         calls.append([day, company, e["event_ticker"], len(markets),
                       sum(qty(m, "volume") or 0 for m in markets), url])
 
-    strikes.sort(key=lambda r: (r["date"], r["company"], r["word"].lower()))
+    # tradeable strikes first within each call; dead ones sink to the bottom of their company
+    strikes.sort(key=lambda r: (r["date"], r["company"],
+                                not (side_ok(r["yes"], args.order) or side_ok(r["no"], args.order)),
+                                r["word"].lower()))
     calls.sort(key=lambda r: (r[0], r[1]))
 
     usd = f"${args.order:g}"
@@ -321,6 +330,25 @@ def main():
     autosize(ws, {get_column_letter(i): 11 for i in range(4, 18)}
              | {get_column_letter(col[f"{n} {usd} fill ¢ (with fees)"]): 16 for n in ("Yes", "No")}
              | {get_column_letter(len(columns)): 45})
+
+    # shortlist: one row per tradeable side, by call date
+    wt = wb.create_sheet("Tradeable", 0)
+    wt.append(["Call date", "Company", "Word", "Side", "Ask ¢", "All-in ¢ (ask + fee)",
+               "Contracts ≤3¢ of ask", f"{usd} fill ¢ (with fees)", f"{usd} contracts",
+               f"Payout % at {usd} fill", "Payout % at ask", "Kalshi link"])
+    picks = [(r, name, r[k]) for r in strikes for name, k in (("Yes", "yes"), ("No", "no"))
+             if side_ok(r[k], args.order)]
+    picks.sort(key=lambda p: (p[0]["date"], p[0]["company"], -p[2]["fills"][args.order]["payout"]))
+    for row, (r, name, sd) in enumerate(picks, 2):
+        f = sd["fills"][args.order]
+        wt.append([r["date"], r["company"], r["word"], f"Buy {name}", sd["ask"], sd["all_in"],
+                   sd["depth"], f["fill_all_in"], f["n"], f["payout"], sd["payout"], r["url"]])
+        wt.cell(row, 7).fill = depth_fill(sd["depth"])
+    style_header(wt)
+    for c in wt[1]:
+        c.alignment = Alignment(wrap_text=True, vertical="top")
+    wt.row_dimensions[1].height = 32
+    autosize(wt, {"L": 45})
 
     # every order size side by side: fill with fees and the payout you'd actually get
     wf = wb.create_sheet("Fills")
@@ -368,6 +396,9 @@ def main():
         ["Payout at fill", "Profit per $1 at the with-fees fill price: what you'd actually get. Red under 33%."],
         ["Partial fill", "The whole visible book can't take the order: shows the contracts available "
                          "instead of a price (red). A limit order is the only route."],
+        ["Tradeable tab", f"One row per side where depth isn't red (100+ within 3¢), a {usd} order fills in "
+                          f"full and the payout at that fill is 33% or more. On Strikes, tradeable words come "
+                          f"first within each call."],
         ["Fills tab", f"The same fill and payout for ${', $'.join(map(str, SIZES))} orders. "
                       f"The web page takes any size."],
     ]:
@@ -383,7 +414,7 @@ def main():
     autosize(ws2, {"F": 45})
     wb.move_sheet("Key", offset=1)
 
-    for sheet in (ws, wf, ws2):
+    for sheet in (wt, ws, wf, ws2):
         for (cell,) in sheet.iter_rows(min_row=2, max_col=1):
             cell.number_format = "ddd mmm d"
         sheet.cell(row=1, column=1).number_format = "General"
@@ -392,7 +423,10 @@ def main():
     out.parent.mkdir(parents=True, exist_ok=True)
     wb.save(out)
     if args.json:
-        write_json(args.json, "kalshi", today, horizon, strikes)
+        # the page recomputes fills from each book for any order size, so leave them out
+        slim = [{**r, **{k: {f: v for f, v in r[k].items() if f != "fills"} for k in ("yes", "no")}}
+                for r in strikes]
+        write_json(args.json, "kalshi", today, horizon, slim)
     print(f"{len(strikes)} strikes across {len(calls)} earnings calls "
           f"({today} to {horizon}) -> {out}")
 

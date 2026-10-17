@@ -86,3 +86,34 @@ td.part{background:var(--bad-bg);color:var(--down);font-weight:600;white-space:n
 table.kt td b{font-weight:700}
 @media (max-width:560px){.order{flex-wrap:wrap}}
 body[data-src="kalshi"] .controls{flex-wrap:wrap} body[data-src="kalshi"] input[type=search]{flex:1 1 260px}
+/* Tradeable shortlist */
+section.short{background:var(--panel);border:2px solid var(--up);border-radius:12px;padding:14px 14px 6px}
+section.short h2{font-size:20px}
+section.short table{border:1px solid var(--line)}
+table.st th,table.st td{padding:6px 8px;vertical-align:top}
+table.st td:nth-child(2),table.st td:nth-child(3),table.st td:nth-child(4),
+table.st th:nth-child(2),table.st th:nth-child(3),table.st th:nth-child(4){text-align:left}
+table.st td.d{color:var(--muted);font-weight:600}
+table.st td a{color:inherit}
+table.st td small{display:block;font-size:11.5px;line-height:1.2}
+.sidetag{font-size:12px;font-weight:700;padding:2px 7px;border-radius:6px;white-space:nowrap}
+.sidetag.yes{background:var(--good-bg);color:var(--up)}
+.sidetag.no{background:var(--bad-bg);color:var(--down)}
+h2.all{font-size:20px;margin:28px 0 0}
+table.kt tr.dead td{opacity:.5}
+table.kt tr.dead td:first-child{opacity:.6}
+/* Print: drop the controls, show every column, keep rows whole */
+@media print{
+  nav,.controls,.sheet,.order{display:none !important}
+  body{background:#fff;font-size:11px}
+  .wrap{max-width:none !important;padding:0}
+  .tbl{overflow:visible}
+  table{font-size:10px;border-radius:0}
+  table.kt th,table.kt td,table.st th,table.st td{padding:3px 4px}
+  table.kt td:first-child{position:static}
+  tr{break-inside:avoid}
+  section{break-inside:auto}
+  section h2,.emeta{break-after:avoid}
+  section.short{border-width:1px}
+  td.dp,td.bad,td.part,.sidetag{-webkit-print-color-adjust:exact;print-color-adjust:exact}
+}

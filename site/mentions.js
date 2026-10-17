@@ -39,6 +39,47 @@
   const pct = (v) => v == null ? "–" : Math.round(v) + "%";
   const payoutAt = (cost) => cost ? (100 / cost - 1) * 100 : null;
 
+  // Tradeable side: depth isn't red (100+ within 3¢), the order fills in full, and the payout
+  // at that fill is 33% or more. A strike is tradeable when either side is.
+  function check(sd, budget) {
+    if (!sd || sd.ask == null) return {ok: false};
+    const f = fill(sd.book, budget);
+    const pay = f && f.full ? payoutAt(f.allIn) : null;
+    return {ok: sd.depth >= 100 && pay != null && pay >= 33, f, pay};
+  }
+  const tradeable = (s, budget) => check(s.yes, budget).ok || check(s.no, budget).ok;
+
+  function shortlist(events, q, budget) {
+    const usd = "$" + budget.toLocaleString();
+    const rows = [];
+    for (const {ev, strikes} of events) {
+      for (const s of strikes) {
+        for (const [name, k] of [["Yes", "yes"], ["No", "no"]]) {
+          const ck = check(s[k], budget);
+          if (ck.ok) rows.push({ev, s, name, sd: s[k], ck});
+        }
+      }
+    }
+    rows.sort((a, b) => a.ev.date.localeCompare(b.ev.date) || a.ev.company.localeCompare(b.ev.company) || b.ck.pay - a.ck.pay);
+    const body = rows.map(({ev, s, name, sd, ck}) => `<tr>
+        <td class="d">${day(ev.date)}</td>
+        <td><a href="${esc(ev.url)}" target="_blank" rel="noopener">${esc(ev.company)}</a></td>
+        <td class="w">${hl(s.word, q)}</td>
+        <td><span class="sidetag ${name.toLowerCase()}">Buy ${name}</span></td>
+        <td><b>${c(sd.ask)}</b><small class="dim">${c(sd.all_in)} with fee</small></td>
+        <td class="dp ${depthCls(sd.depth)}">${n(sd.depth)}</td>
+        <td><b>${c(ck.f.allIn)}</b><small class="dim">${n(ck.f.n)} contracts</small></td>
+        <td><b>${pct(ck.pay)}</b></td>
+        <td class="dim">${pct(sd.payout)}</td></tr>`).join("");
+    return `<section class="short">
+      <h2>Tradeable <span class="d">${rows.length} side${rows.length === 1 ? "" : "s"} at ${usd}</span></h2>
+      <p class="emeta">Depth isn't red (100+ contracts within 3¢), a ${usd} order fills in full, and the payout at that fill is 33% or more. Sorted by call date.</p>
+      ${rows.length ? `<div class="tbl"><table class="st">
+        <thead><tr><th>Call</th><th>Company</th><th>Word</th><th>Side</th><th>Ask</th><th>≤3¢ depth</th><th>${usd} fill<br>(with fees)</th><th>Payout at fill</th><th>Payout at ask</th></tr></thead>
+        <tbody>${body}</tbody></table></div>` : `<p class="empty">Nothing passes at ${usd}. Try a smaller order size.</p>`}
+    </section><h2 class="all">All strikes</h2>`;
+  }
+
   function sideCells(sd, budget) {
     if (!sd || sd.ask == null) return `<td class="dim">–</td><td></td><td></td><td></td><td class="sep"></td>`;
     const f = fill(sd.book, budget);
@@ -70,7 +111,7 @@
     return `<table class="kt">
       <thead><tr><th rowspan="2">Word</th><th colspan="5" class="grp sep">Buy Yes</th><th colspan="5" class="grp sep">Buy No</th><th rowspan="2">Volume</th></tr>
       <tr>${head("Yes")}${head("No")}</tr></thead>
-      <tbody>${rows.map((s) => `<tr><td class="w">${hl(s.word, q)}</td>${sideCells(s.yes, budget)}${sideCells(s.no, budget)}<td>${n(s.volume)}</td></tr>`).join("")}</tbody>
+      <tbody>${rows.map((s) => `<tr${tradeable(s, budget) ? "" : ` class="dead"`}><td class="w">${hl(s.word, q)}</td>${sideCells(s.yes, budget)}${sideCells(s.no, budget)}<td>${n(s.volume)}</td></tr>`).join("")}</tbody>
     </table>`;
   }
 
@@ -105,13 +146,20 @@
       price: (a, b) => yesAsk(b) - yesAsk(a),
     }[sort] || ((a, b) => yesAsk(b) - yesAsk(a));
     let shown = 0, calls = 0;
-    const html = [];
+    const html = [], picked = [];
     for (const ev of data.events) {
       if (when && ev.date !== when) continue;
       const companyHit = ev.company.toLowerCase().includes(q);
       const rows = ev.strikes.filter((s) => !q || companyHit || s.word.toLowerCase().includes(q));
       if (!rows.length) continue;
-      rows.sort(by);
+      if (kalshi) {
+        // tradeable strikes first, dead ones (red depth, partial fill or thin payout) at the bottom
+        const ok = new Map(rows.map((s) => [s, tradeable(s, budget)]));
+        rows.sort((a, b) => (ok.get(b) - ok.get(a)) || by(a, b));
+        picked.push({ev, strikes: rows});
+      } else {
+        rows.sort(by);
+      }
       shown += rows.length; calls++;
       const wq = companyHit ? "" : q;
       html.push(`<section>
@@ -119,7 +167,9 @@
         <p class="emeta">${ev.strikes.length} words · ${money(ev.volume)} volume${src === "polymarket" ? " · resolves by this date" : ""}</p>
         <div class="tbl">${kalshi ? kalshiTable(rows, wq, budget) : plainTable(rows, wq)}</div></section>`);
     }
-    $("list").innerHTML = html.join("") || `<p class="empty">No words match.</p>`;
+    $("list").innerHTML = html.length
+      ? (kalshi ? shortlist(picked, q, budget) : "") + html.join("")
+      : `<p class="empty">No words match.</p>`;
     $("summary").textContent = `${shown} words across ${calls} earnings call${calls === 1 ? "" : "s"}` +
       (kalshi ? ` · Fees (0.07 × P × (1−P)) are included in every figure except "before fees". Payout = profit per $1, red under 33%; payout at fill is what a $${budget.toLocaleString()} order would actually earn. Depth: red under 100, yellow 100–300, green over 300. Partial fill = the whole book can't take the order, so only a limit order works.`
               : " · Yes and No are ask prices (what it costs to buy)");
