@@ -40,6 +40,7 @@ jobs:
         run: |
           pip install -q requests openpyxl
           python mention_sheet.py --out site/data/earnings_mentions.xlsx
+          python poly_mention_sheet.py --out site/data/polymarket_mentions.xlsx
           ls -la site/data
       - uses: actions/configure-pages@v5
       - uses: actions/upload-pages-artifact@v3
