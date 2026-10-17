@@ -4,7 +4,7 @@ Kalshi market data is public (no login). Pulls all open KXEARNINGSMENTION* event
 keeps those whose call date (from the event ticker, e.g. -26OCT29) falls within
 --days of today, and writes one Excel file:
 
-  Strikes  - one row per word, prices in cents
+  Strikes  - one row per word, prices in cents, contracts buyable within 3¢ of the ask
   Events   - one row per earnings call (date, strike count, volume)
 
 Output: exports/earnings_mentions_<YYYY-MM-DD>.xlsx (git-ignored)
@@ -95,6 +95,29 @@ def fetch_events():
         time.sleep(0.1)
 
 
+def depth_within(levels, window=3):
+    """Contracts you can buy within `window`¢ of the best ask. Kalshi books list bids only:
+    buying YES fills against NO bids (YES ask = 100 - best NO bid), so pass the opposite side."""
+    book = [(round(float(p) * 10000), float(q)) for p, q in levels or []]
+    if not book:
+        return 0
+    best = max(p for p, _ in book)
+    return round(sum(q for p, q in book if p >= best - window * 100))
+
+
+def fetch_depth(tickers, window=3):
+    """{ticker: (yes_depth, no_depth)} from the batch orderbook endpoint, 100 tickers per call."""
+    out = {}
+    for i in range(0, len(tickers), 100):
+        params = [("tickers", t) for t in tickers[i:i + 100]]
+        for ob in get_json(f"{KALSHI}/markets/orderbooks", params).get("orderbooks", []):
+            book = ob.get("orderbook_fp") or {}
+            out[ob["ticker"]] = (depth_within(book.get("no_dollars"), window),
+                                 depth_within(book.get("yes_dollars"), window))
+        time.sleep(0.1)
+    return out
+
+
 def autosize(ws, widths=None):
     for i, col in enumerate(ws.columns, 1):
         letter = get_column_letter(i)
@@ -141,6 +164,8 @@ def main():
     today = dt.date.today()
     horizon = today + dt.timedelta(days=args.days)
     events = fetch_events()
+    depth = fetch_depth([m["ticker"] for e in events if (d := event_date(e["event_ticker"]))
+                         and today <= d <= horizon for m in e.get("markets", [])])
 
     strikes, calls = [], []
     for e in events:
@@ -152,10 +177,12 @@ def main():
         markets = [m for m in e.get("markets", []) if m.get("status") in ("active", "open", None)]
         for m in markets:
             yes_bid, yes_ask = cents(m, "yes_bid"), cents(m, "yes_ask")
+            yes_depth, no_depth = depth.get(m.get("ticker"), (None, None))
             strikes.append([
                 day, company, m.get("yes_sub_title") or m.get("subtitle") or "",
                 yes_bid, yes_ask, cents(m, "no_bid"), cents(m, "no_ask"), cents(m, "last_price"),
                 (yes_ask - yes_bid) if yes_bid is not None and yes_ask is not None else None,
+                yes_depth, no_depth,
                 qty(m, "volume"), qty(m, "volume_24h"), qty(m, "open_interest"),
                 m.get("ticker"), url,
             ])
@@ -169,11 +196,12 @@ def main():
     ws = wb.active
     ws.title = "Strikes"
     ws.append(["Call date", "Company", "Word", "Yes bid ¢", "Yes ask ¢", "No bid ¢", "No ask ¢",
-               "Last ¢", "Spread ¢", "Volume", "Volume 24h", "Open interest", "Ticker", "Kalshi link"])
+               "Last ¢", "Spread ¢", "Yes contracts ≤3¢ of ask", "No contracts ≤3¢ of ask",
+               "Volume", "Volume 24h", "Open interest", "Ticker", "Kalshi link"])
     for r in strikes:
         ws.append(r)
     style_header(ws)
-    autosize(ws, {"N": 45})
+    autosize(ws, {"J": 14, "K": 14, "P": 45})
 
     ws2 = wb.create_sheet("Events")
     ws2.append(["Call date", "Company", "Event ticker", "Strikes", "Total volume", "Kalshi link"])
@@ -193,7 +221,7 @@ def main():
     if args.json:
         write_json(args.json, "kalshi", today, horizon, strikes,
                    {"word": 2, "yes_bid": 3, "yes_ask": 4, "no_bid": 5, "no_ask": 6, "last": 7,
-                    "spread": 8, "volume": 9, "volume_24h": 10})
+                    "spread": 8, "yes_depth": 9, "no_depth": 10, "volume": 11, "volume_24h": 12})
     print(f"{len(strikes)} strikes across {len(calls)} earnings calls "
           f"({today} to {horizon}) -> {out}")
 
