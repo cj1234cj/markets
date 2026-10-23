@@ -1,8 +1,8 @@
 {
- "generated": "2026-10-22T22:12:43+00:00",
+ "generated": "2026-10-23T05:50:54+00:00",
  "basis": {
   "arb": {
-   "n": 9,
+   "n": 10,
    "delivered": 1.0,
    "factor": 1.0
   },
@@ -17,9 +17,9 @@
    "factor": 0.732
   },
   "ensemble": {
-   "n": 24,
-   "delivered": 0.0,
-   "factor": 0.556
+   "n": 28,
+   "delivered": 0.385,
+   "factor": 0.703
   },
   "ensemble_mixed": {
    "n": 1,
@@ -32,9 +32,9 @@
    "factor": 0.769
   },
   "history": {
-   "n": 26,
+   "n": 32,
    "delivered": 0.0,
-   "factor": 0.536
+   "factor": 0.484
   },
   "history_mixed": {
    "n": 4,
