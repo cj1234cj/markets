@@ -1,8 +1,8 @@
 {
- "generated": "2026-10-23T21:55:53+00:00",
+ "generated": "2026-10-24T05:33:34+00:00",
  "basis": {
   "arb": {
-   "n": 10,
+   "n": 11,
    "delivered": 1.0,
    "factor": 1.0
   },
@@ -17,9 +17,9 @@
    "factor": 0.714
   },
   "ensemble": {
-   "n": 28,
-   "delivered": 0.385,
-   "factor": 0.703
+   "n": 30,
+   "delivered": 0.0,
+   "factor": 0.5
   },
   "ensemble_mixed": {
    "n": 1,
@@ -27,14 +27,14 @@
    "factor": 0.968
   },
   "extreme": {
-   "n": 9,
+   "n": 13,
    "delivered": 0.0,
-   "factor": 0.769
+   "factor": 0.698
   },
   "history": {
-   "n": 32,
+   "n": 36,
    "delivered": 0.0,
-   "factor": 0.484
+   "factor": 0.455
   },
   "history_mixed": {
    "n": 4,
