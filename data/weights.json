@@ -1,8 +1,8 @@
 {
- "generated": "2026-10-28T06:43:47+00:00",
+ "generated": "2026-10-28T13:54:10+00:00",
  "fitted": true,
  "events": 24,
- "temperature": 0.9751,
+ "temperature": 0.975,
  "weights": {
   "market": 0.4968,
   "polymarket": 0.0855,
