@@ -1,5 +1,5 @@
 {
- "generated": "2026-10-28T23:01:31+00:00",
+ "generated": "2026-10-29T06:51:12+00:00",
  "basis": {
   "arb": {
    "n": 11,
@@ -7,19 +7,19 @@
    "factor": 1.0
   },
   "bracket": {
-   "n": 52,
+   "n": 53,
    "delivered": 0.0,
-   "factor": 0.366
+   "factor": 0.361
   },
   "cross": {
-   "n": 16,
+   "n": 17,
    "delivered": 0.0,
-   "factor": 0.652
+   "factor": 0.638
   },
   "ensemble": {
-   "n": 42,
-   "delivered": 0.097,
-   "factor": 0.473
+   "n": 60,
+   "delivered": 0.0,
+   "factor": 0.333
   },
   "ensemble_mixed": {
    "n": 1,
@@ -27,14 +27,14 @@
    "factor": 0.968
   },
   "extreme": {
-   "n": 16,
+   "n": 23,
    "delivered": 0.0,
-   "factor": 0.652
+   "factor": 0.566
   },
   "history": {
-   "n": 36,
+   "n": 45,
    "delivered": 0.0,
-   "factor": 0.455
+   "factor": 0.4
   },
   "history_mixed": {
    "n": 4,
