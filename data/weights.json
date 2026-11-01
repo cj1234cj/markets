@@ -1,5 +1,5 @@
 {
- "generated": "2026-11-01T07:14:35+00:00",
+ "generated": "2026-11-01T18:19:39+00:00",
  "fitted": true,
  "events": 42,
  "temperature": 0.9165,
@@ -9,7 +9,7 @@
   "kalshi_history": 0.05,
   "kalshi_recent3": 0.0333,
   "peers_season": 0.0417,
-  "news": 0.0926
+  "news": 0.0927
  },
  "prior": {
   "market": 0.5,
