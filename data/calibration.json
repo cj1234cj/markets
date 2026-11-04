@@ -1,5 +1,5 @@
 {
- "generated": "2026-11-03T20:00:01+00:00",
+ "generated": "2026-11-04T07:21:55+00:00",
  "basis": {
   "arb": {
    "n": 12,
@@ -7,19 +7,19 @@
    "factor": 1.0
   },
   "bracket": {
-   "n": 63,
+   "n": 64,
    "delivered": 0.0,
-   "factor": 0.323
+   "factor": 0.319
   },
   "cross": {
-   "n": 19,
+   "n": 20,
    "delivered": 0.0,
-   "factor": 0.612
+   "factor": 0.6
   },
   "ensemble": {
-   "n": 90,
-   "delivered": 0.0,
-   "factor": 0.25
+   "n": 104,
+   "delivered": 0.093,
+   "factor": 0.296
   },
   "ensemble_mixed": {
    "n": 1,
