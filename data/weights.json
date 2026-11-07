@@ -1,15 +1,15 @@
 {
- "generated": "2026-11-07T06:55:25+00:00",
+ "generated": "2026-11-07T13:49:47+00:00",
  "fitted": true,
  "events": 68,
- "temperature": 0.8924,
+ "temperature": 0.891,
  "weights": {
-  "market": 0.4999,
-  "polymarket": 0.0613,
+  "market": 0.4996,
+  "polymarket": 0.0606,
   "kalshi_history": 0.0367,
-  "kalshi_recent3": 0.0927,
+  "kalshi_recent3": 0.0938,
   "peers_season": 0.0306,
-  "news": 0.0637
+  "news": 0.0631
  },
  "prior": {
   "market": 0.5,
