@@ -1,15 +1,15 @@
 {
- "generated": "2026-11-17T08:55:29+00:00",
+ "generated": "2026-11-17T21:37:25+00:00",
  "basis": {
   "arb": {
-   "n": 19,
-   "delivered": 0.474,
-   "factor": 0.796
+   "n": 29,
+   "delivered": 0.671,
+   "factor": 0.838
   },
   "bracket": {
-   "n": 70,
+   "n": 71,
    "delivered": 0.0,
-   "factor": 0.3
+   "factor": 0.297
   },
   "cross": {
    "n": 21,
