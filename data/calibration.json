@@ -1,5 +1,5 @@
 {
- "generated": "2026-11-22T20:13:24+00:00",
+ "generated": "2026-11-23T08:44:47+00:00",
  "basis": {
   "arb": {
    "n": 29,
@@ -27,9 +27,9 @@
    "factor": 0.968
   },
   "extreme": {
-   "n": 35,
+   "n": 36,
    "delivered": 0.0,
-   "factor": 0.462
+   "factor": 0.455
   },
   "history": {
    "n": 81,
